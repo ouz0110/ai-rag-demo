@@ -35,6 +35,7 @@ var (
 	pathList = []string{
 		"api/common",
 		"api/base/v1",
+		"api/nocli/v1",
 	}
 	// 同步编译列表
 	pathSyncList = []string{}

@@ -9,6 +9,7 @@ import (
 
 	basepb "ai-rag-demo/api/base/v1"
 	cmpb "ai-rag-demo/api/common/v1"
+	noclipb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/cache"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/metrics"
@@ -16,6 +17,7 @@ import (
 	"ai-rag-demo/internal/pkg/utils"
 	"ai-rag-demo/internal/server/middleware"
 	"ai-rag-demo/internal/service/base"
+	"ai-rag-demo/internal/service/nocli"
 
 	_ "net/http/pprof" // pprof support
 
@@ -43,6 +45,7 @@ func NewHTTPServer(
 	cfg *conf.Config,
 	cache *cache.Cache,
 	accountSrv *base.AccountService,
+	chatSrv *nocli.ChatService,
 ) *transHttp.Server {
 	opts := wrapHTTPOptions(cfg, cache)
 	server := transHttp.NewServer(opts...)
@@ -54,6 +57,9 @@ func NewHTTPServer(
 
 	// 注册账号服务
 	basepb.RegisterAccountsHTTPServer(server, accountSrv)
+
+	// 注册AI对话服务
+	noclipb.RegisterNocliChatHTTPServer(server, chatSrv)
 
 	return server
 }

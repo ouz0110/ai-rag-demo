@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package ai_rag_demo_api.nocli.v1;
+option go_package = "nocli/v1;nocli";
+
+import "google/api/annotations.proto";
+import "validate/validate.proto";
+
+// Nocli AI对话服务
+service NocliChat {
+  // 发送消息
+  rpc Chat(ChatRequest) returns (ChatResponse) {
+    option (google.api.http) = {
+      post: "/nocli/sub/chat"
+      body: "*"
+    };
+  }
+}
+
+// 聊天请求
+message ChatRequest {
+  // 消息内容
+  string message = 1 [(validate.rules).string.min_len = 1, (validate.rules).string.max_len = 4096];
+  // 会话ID
+  string session_id = 2;
+  // 模型名称
+  string model = 3;
+}
+
+// 聊天响应
+message ChatResponse {
+  // 回复内容
+  string reply = 1;
+  // 会话ID
+  string session_id = 2;
+}

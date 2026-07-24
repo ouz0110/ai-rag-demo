@@ -71,6 +71,12 @@ type OTel struct {
 	StdOut     bool    `yaml:"std_out"`
 }
 
+type OpenAI struct {
+	APIKey  string `json:"api_key"`
+	BaseURL string `json:"base_url"`
+	Model   string `json:"model"`
+}
+
 type Config struct {
 	Secret      string `json:"secret"`
 	Name        string `json:"name"`
@@ -109,6 +115,7 @@ type Config struct {
 		MysqlDefaultCa string                  `json:"mysql_default_ca"`
 		Database       map[string]*DBConfig    `json:"database"`
 		OTel           *OTel                   `json:"otel"`
+		OpenAI         []*OpenAI               `json:"openai"`
 		Nacos          struct {
 			Addr      string `json:"addr"`
 			Port      string `json:"port"`
