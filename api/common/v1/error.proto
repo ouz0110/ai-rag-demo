@@ -1,0 +1,29 @@
+
+package ai_rag_demo_api;
+option go_package = "common/v1;common";
+import "errors/errors.proto";
+
+enum ErrorEnum {
+  option (errors.default_code) = 500;
+  _ = 0 [ (errors.code) = 500 ];
+
+  // param error, [300,400)
+  WRONG_PARAMS_ERROR = 300 [ (errors.code) = 200 ];
+  HEADER_MISSING = 301 [ (errors.code) = 200 ];
+  LIMIT_RATE = 302 [ (errors.code) = 200 ];
+
+  // token error, [400,500)
+  UNAUTHORIZED = 401 [ (errors.code) = 200 ];
+  TOKEN_EXPIRED = 403 [ (errors.code) = 200 ];
+
+  // server error, [500,600) 服务报错会直接打印ERROR日志进行告警
+  UNKNOWN_ERROR = 500 [ (errors.code) = 200 ];
+  INTERNAL_SERVER_ERROR = 501 [ (errors.code) = 200 ];
+  EXTERNAL_SERVER_ERROR = 502 [ (errors.code) = 200 ];
+  PANIC_ERROR = 503 [ (errors.code) = 200 ];
+  BAD_REQUEST = 504 [ (errors.code) = 200 ];
+  SIGNATURE_IS_INVALID = 505 [ (errors.code) = 200 ];
+
+  // common error [600,1000)
+  NO_PERMISSION = 600 [ (errors.code) = 200 ];        // 没有权限
+}

@@ -1,0 +1,54 @@
+secret: 87S7yST0Bx249iSqxUhzR
+name: ai_rag_demo_api
+env: local
+version: v1.0.0
+i18n:
+  default: zh-hans-cn
+  config_group: AI_RAG_DEMO_API_GROUP
+  config:
+    - active.zh-cn.toml
+service:
+server:
+  domain: ${SRV_DOMAIN:https://dev.ai-rag-demo.com/ai-rag-demo/api}
+  http:
+    addr: 0.0.0.0:8001
+    timeout: 15s
+  grpc:
+    addr: 0.0.0.0:8002
+    timeout: 5s
+  srv:
+source:
+  log:
+    level: debug
+  aes_ecb:
+    code: "0123456789012345"
+  otel:
+    enable: false
+    endpoint: "localhost:4317" # jaeger上报端口
+    sample_rate: 1
+    std_out: true
+  redis:
+    base:
+      password: "123456"
+      addrs: 127.0.0.1:6379
+      read_timeout: 0.2s
+      write_timeout: 0.2s
+  mysql_default_ca:
+  database:
+    base:
+      driver: mysql
+      source: root:123456@tcp(127.0.0.1:3306)/base?parseTime=true&charset=utf8mb4
+      auto_migrate: off
+      max_idle_conns: 200
+      max_open_conns: 200
+      max_lifetime: 600
+  nacos:
+    addr: nacos-dev.ai-rag-demo.com
+    port: "80"
+    access_key_id:
+    access_key_secret:
+    namespace:
+    log:
+      level: debug
+external:
+

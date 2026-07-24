@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package ai_rag_demo_api;
+option go_package = "common/v1;common";
+import "google/protobuf/struct.proto";
+
+
+message Response {
+  int32 code = 1;
+  string message = 2;
+  optional string cause = 3;
+  string request_id = 4;
+  google.protobuf.Struct data = 5;
+  map<string, string> metadata = 6;
+  string reason = 7;
+}
+
+message Pagination {
+  uint32 size = 1;             // 每页数量（作为响应时表示当前页实际数量）
+  uint32 number = 2;           // 页码，从 1 开始
+  uint32 total = 3;            // 数据总数
+  repeated string sort = 4;    // 排序 ["id desc", "created_at asc"]
+}

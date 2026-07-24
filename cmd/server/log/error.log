@@ -1,0 +1,2 @@
+{"level":"ERROR","time":"2026-07-23T10:57:59.175+0800","logger":"default","caller":"base/cache.go:20","msg":"NewCache err","App":"ai_rag_demo_api","error":"dial tcp 127.0.0.1:6379: connect: connection refused"}
+{"level":"ERROR","time":"2026-07-23T10:57:59.176+0800","logger":"default","caller":"base/data.go:19","msg":"NewDB err%!(EXTRA string=error, *net.OpError=dial tcp 127.0.0.1:3306: connect: connection refused)","App":"ai_rag_demo_api"}

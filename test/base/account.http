@@ -1,0 +1,54 @@
+@baseUrl = http://localhost:8001
+
+@token =  
+
+### 注册
+POST {{baseUrl}}/base/sub/accounts/register
+Content-Type: application/json
+
+{
+  "account": "17700000001",
+  "password": "12345678",
+  "nickname": "TestUser",
+  "avatar": "https://example.com/avatar.png"
+}
+
+> {%
+client.test("Register response has token", function() {
+    client.assert(client.response.status === 200, "register status should be 200");
+    var json = client.response.json();
+    client.assert(json.token && json.token.length > 0, "token should not be empty");
+    client.global.set("token", json.token);
+});
+%}
+
+### 登录
+POST {{baseUrl}}/base/sub/accounts/login
+Content-Type: application/json
+
+{
+  "account": "17700000001",
+  "password": "12345678"
+}
+
+> {%
+client.test("Login response has token", function() {
+    client.assert(client.response.status === 200, "login status should be 200");
+    var json = client.response.json();
+    client.assert(json.token && json.token.length > 0, "token should not be empty");
+    client.global.set("token", json.token);
+});
+%}
+
+### 获取用户信息（需鉴权）
+GET {{baseUrl}}/base/sub/accounts/userInfo
+Authorization: Bearer {{token}}
+
+> {%
+client.test("GetUserInfo response valid", function() {
+    client.assert(client.response.status === 200, "userInfo status should be 200");
+    var json = client.response.json();
+    client.assert(json.account === "17700000001", "account should match");
+    client.assert(json.openid && json.openid.length > 0, "openid should not be empty");
+});
+%}

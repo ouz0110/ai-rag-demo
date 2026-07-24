@@ -1,0 +1,11 @@
+config: config.yaml
+config_group: AI_RAG_DEMO_API_GROUP
+source:
+  nacos:
+    addr: ${NACOS_HOST:nacos-dev.ai-rag-demo.com}
+    port: ${NACOS_PORT:80}
+    username: ${NACOS_USERNAME:nacos-dev}
+    password: ${NACOS_PASSWORD:PEZ0FiCzVyZaaKol}
+    namespace: ${NACOS_NAMESPACE}
+    log:
+      level: warn

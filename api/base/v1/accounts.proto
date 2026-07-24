@@ -1,0 +1,127 @@
+syntax = "proto3";
+
+package ai_rag_demo_api.base.v1;
+option go_package = "base/v1;base";
+
+import "google/api/annotations.proto";
+import "validate/validate.proto";
+
+// Accounts 账号服务
+service Accounts {
+  // 注册账号
+  rpc Register(RegisterRequest) returns (RegisterResponse) {
+    option (google.api.http) = {
+      post: "/base/sub/accounts/register"
+      body: "*"
+    };
+  }
+  // 登录
+  rpc Login(LoginRequest) returns (LoginResponse) {
+    option (google.api.http) = {
+      post: "/base/sub/accounts/login"
+      body: "*"
+    };
+  }
+  // 登出
+  rpc Logout(LogoutRequest) returns (LogoutResponse) {
+    option (google.api.http) = {
+      post: "/base/sub/accounts/logout"
+      body: "*"
+    };
+  }
+  // 修改密码
+  rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse) {
+    option (google.api.http) = {
+      post: "/base/sub/accounts/changePassword"
+      body: "*"
+    };
+  }
+  // 获取当前用户信息
+  rpc GetUserInfo(GetUserInfoRequest) returns (Account) {
+    option (google.api.http) = {
+      get: "/base/sub/accounts/userInfo"
+    };
+  }
+}
+
+// 注册请求
+message RegisterRequest {
+  // 登录账号（手机号/邮箱/用户名等）
+  string account  = 1 [(validate.rules).string.min_len = 3, (validate.rules).string.max_len = 32];
+  // 密码
+  string password = 2 [(validate.rules).string.min_len = 6, (validate.rules).string.max_len = 128];
+  // 昵称
+  string nickname = 3 [(validate.rules).string.max_len = 64];
+  // 头像URL
+  string avatar   = 4;
+  // 用户唯一标识（可选，不传则系统生成）
+  string openid   = 5 [(validate.rules).string.max_len = 128];
+}
+
+// 注册响应
+message RegisterResponse {
+  // 访问令牌
+  string token = 1;
+}
+
+// 登录请求
+message LoginRequest {
+  // 登录账号（手机号/邮箱/用户名等）
+  string account  = 1 [(validate.rules).string.min_len = 3, (validate.rules).string.max_len = 32];
+  // 密码
+  string password = 2 [(validate.rules).string.min_len = 6, (validate.rules).string.max_len = 128];
+}
+
+// 登录响应
+message LoginResponse {
+  // 访问令牌
+  string token = 1;
+}
+
+// 登出请求
+message LogoutRequest {
+}
+
+// 登出响应
+message LogoutResponse {
+}
+
+// 修改密码请求
+message ChangePasswordRequest {
+  // 旧密码
+  string old_password = 1 [(validate.rules).string.min_len = 6];
+  // 新密码
+  string new_password = 2 [(validate.rules).string.min_len = 6];
+}
+
+// 修改密码响应
+message ChangePasswordResponse {
+}
+
+// 获取用户信息请求
+message GetUserInfoRequest {
+}
+
+// 账号信息
+message Account {
+  // 主键ID
+  int64  id      = 1;
+  // 登录账号
+  string account = 2;
+  // 昵称
+  string nickname = 3;
+  // 头像URL
+  string avatar  = 4;
+  // 用户唯一标识
+  string openid  = 5;
+  // 状态 1-启用 2-禁用
+  int32 status = 6;
+  // 创建时间（时间戳）
+  int64 createdAt = 7;
+  // 更新时间（时间戳）
+  int64 updatedAt = 8;
+  // 删除时间（时间戳）
+  int64 deletedAt = 9;
+  // 最后登录时间（时间戳）
+  int64 lastLoginTime = 10;
+}

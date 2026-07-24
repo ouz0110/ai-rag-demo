@@ -1,0 +1,10 @@
+syntax = "proto3";
+
+package ai_rag_demo_api;
+option go_package = "common/v1;common";
+
+// Money 金钱
+message Money {
+  string currency_code = 1;
+  string value = 2;
+}

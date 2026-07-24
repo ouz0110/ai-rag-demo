@@ -1,0 +1,4 @@
+# 错误 message
+error.unknown_error = "未知错误"
+error.internal_server_error = "系统内部错误"
+error.verify_code_invalid = "验证码错误"
