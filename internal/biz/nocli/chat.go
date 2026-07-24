@@ -15,6 +15,7 @@ import (
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
 	dataBase "ai-rag-demo/internal/data/base"
+	"ai-rag-demo/internal/pkg/log"
 	"ai-rag-demo/internal/pkg/utils"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -54,6 +55,8 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 	_, user := common.UserFromContext(ctx)
 	now := time.Now().Unix()
 
+	log.Debugw(ctx, "completion_start", "has_session", sessionID != "", "model", req.Model, "message_len", len(req.Message))
+
 	if sessionID == "" {
 		sessionID = utils.NewUUID()
 		session := &dataBase.NocliSessionModel{
@@ -66,6 +69,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		if err := s.allDb.Base.NocliSessionRepo.Create(ctx, session); err != nil {
 			return nil, fmt.Errorf("创建会话失败: %v", err)
 		}
+		log.Debugw(ctx, "session_created", "session_id", sessionID)
 
 		sysMsg, _ := json.Marshal(openai.ChatCompletionMessage{
 			Role: "system", Content: systemPrompt,
@@ -81,6 +85,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		if _, ok, err := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID); err != nil || !ok {
 			return nil, fmt.Errorf("会话不存在")
 		}
+		log.Debugw(ctx, "session_loaded", "session_id", sessionID)
 	}
 
 	messages, err := s.loadHistory(ctx, sessionID)
@@ -88,40 +93,28 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		return nil, fmt.Errorf("加载对话历史失败: %v", err)
 	}
 
+	// 记录新消息的起始位置，用于后续保存
+	newMessageStart := len(messages)
+
 	messages = append(messages, openai.ChatCompletionMessage{
 		Role: "user", Content: req.Message,
 	})
 
-	userMsg, _ := json.Marshal(openai.ChatCompletionMessage{
-		Role: "user", Content: req.Message,
-	})
-	if err := s.allDb.Base.NocliMessageRepo.Create(ctx, &dataBase.NocliMessageModel{
-		SessionID: sessionID,
-		Msg:       string(userMsg),
-		CreatedAt: time.Now().Unix(),
-	}); err != nil {
-		return nil, fmt.Errorf("保存用户消息失败: %v", err)
-	}
-
 	tools := s.toolRegistry.BuildTools()
 
-	reply, err := s.runChatLoop(ctx, messages, tools, req.Model)
+	start := time.Now()
+	messages, reply, err := s.runChatLoop(ctx, sessionID, messages, tools, req.Model)
+	duration := time.Since(start)
 	if err != nil {
+		log.Errorw(ctx, "completion_error", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "error", err)
 		return nil, fmt.Errorf("对话失败: %v", err)
 	}
 
-	assistantMsg, _ := json.Marshal(openai.ChatCompletionMessage{
-		Role: "assistant", Content: reply,
-	})
-	if err := s.allDb.Base.NocliMessageRepo.Create(ctx, &dataBase.NocliMessageModel{
-		SessionID: sessionID,
-		Msg:       string(assistantMsg),
-		CreatedAt: time.Now().Unix(),
-	}); err != nil {
-		return nil, fmt.Errorf("保存助手消息失败: %v", err)
+	if err := s.saveHistory(ctx, sessionID, messages[newMessageStart:]); err != nil {
+		return nil, fmt.Errorf("保存对话历史失败: %v", err)
 	}
 
-	s.allDb.Base.NocliSessionRepo.UpdateUpdatedAt(ctx, sessionID, time.Now().Unix())
+	log.Debugw(ctx, "completion_end", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "reply_len", len(reply))
 
 	return &pb.CompletionResponse{
 		Reply:     reply,
@@ -129,12 +122,26 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 	}, nil
 }
 
-func (s *ChatBiz) runChatLoop(ctx context.Context, messages []openai.ChatCompletionMessage, tools []openai.Tool, model string) (string, error) {
+func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []openai.ChatCompletionMessage, tools []openai.Tool, model string) ([]openai.ChatCompletionMessage, string, error) {
 	if model == "" {
 		model = s.cfg.Source.OpenAI.Model
 	}
 
+	baseFields := []interface{}{
+		"session_id", sessionID,
+		"model", model,
+	}
+
+	log.Debugw(ctx, "chat_loop_start", append(baseFields, "messages_count", len(messages), "tools_count", len(tools))...)
+	loopStart := time.Now()
+	iteration := 0
+	totalToolCalls := 0
+
 	for {
+		iteration++
+
+		log.Debugw(ctx, "llm_call_start", append(baseFields, "iteration", iteration, "messages_count", len(messages), "tools_count", len(tools))...)
+
 		req := openai.ChatCompletionRequest{
 			Model:    model,
 			Messages: messages,
@@ -142,51 +149,56 @@ func (s *ChatBiz) runChatLoop(ctx context.Context, messages []openai.ChatComplet
 		}
 
 		client := s.openaiChatModel.GetOpenAI(ctx)
+		callStart := time.Now()
 		resp, err := client.CreateChatCompletion(ctx, req)
+		callDuration := time.Since(callStart)
 		if err != nil {
-			return "", fmt.Errorf("OpenAI 调用失败: %v", err)
-		}
-
-		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("OpenAI 返回空响应")
+			log.Errorw(ctx, "llm_call_error", append(baseFields, "iteration", iteration, "duration_ms", callDuration.Milliseconds(), "error", err)...)
+			return nil, "", fmt.Errorf("OpenAI 调用失败: %v", err)
 		}
 
 		choice := resp.Choices[0]
+		msg := choice.Message
 
-		if choice.Message.Content == "" {
+		log.Debugw(ctx, "llm_call_end", append(baseFields, "iteration", iteration, "duration_ms", callDuration.Milliseconds(), "finish_reason", choice.FinishReason)...)
+
+		if msg.ReasoningContent != "" {
+			log.Debugw(ctx, "llm_reasoning", append(baseFields, "iteration", iteration, "content_len", len(msg.ReasoningContent), "content", truncateText(msg.ReasoningContent, 500))...)
+		}
+
+		if msg.Content == "" && len(msg.ToolCalls) == 0 {
 			continue
 		}
 
-		msg := choice.Message
-		messages = append(messages, openai.ChatCompletionMessage{
-			Role:       msg.Role,
-			Content:    msg.Content,
-			ToolCalls:  msg.ToolCalls,
-			ToolCallID: msg.ToolCallID,
-		})
-
-		if len(msg.ToolCalls) == 0 {
-			return msg.Content, nil
+		if msg.Content != "" {
+			log.Debugw(ctx, "llm_content", append(baseFields, "iteration", iteration, "content_len", len(msg.Content), "content", truncateText(msg.Content, 500))...)
 		}
 
-		messages = append(messages, openai.ChatCompletionMessage{
-			Role:       msg.Role,
-			Content:    msg.Content,
-			ToolCalls:  msg.ToolCalls,
-			ToolCallID: msg.ToolCallID,
-		})
+		messages = append(messages, msg)
+
+		if len(msg.ToolCalls) == 0 {
+			log.Debugw(ctx, "chat_loop_end", append(baseFields, "total_iterations", iteration, "total_tool_calls", totalToolCalls, "loop_duration_ms", time.Since(loopStart).Milliseconds())...)
+			return messages, msg.Content, nil
+		}
 
 		for _, tc := range msg.ToolCalls {
+			totalToolCalls++
+			log.Debugw(ctx, "tool_call", append(baseFields, "iteration", iteration, "tool_index", totalToolCalls, "tool_id", tc.ID, "tool_name", tc.Function.Name, "args_len", len(tc.Function.Arguments))...)
+
 			result, err := s.toolRegistry.Call(ctx, tc.Function.Name, tc.Function.Arguments)
 			if err != nil {
 				result = fmt.Sprintf("工具执行失败: %v", err)
+				log.Debugw(ctx, "tool_result", append(baseFields, "iteration", iteration, "tool_id", tc.ID, "tool_name", tc.Function.Name, "result_len", len(result), "error", err)...)
+			} else {
+				log.Debugw(ctx, "tool_result", append(baseFields, "iteration", iteration, "tool_id", tc.ID, "tool_name", tc.Function.Name, "result_len", len(result))...)
 			}
 
-			messages = append(messages, openai.ChatCompletionMessage{
-				Role:       "tool",
+			toolMsg := openai.ChatCompletionMessage{
+				Role:       openai.ChatMessageRoleTool,
 				Content:    result,
 				ToolCallID: tc.ID,
-			})
+			}
+			messages = append(messages, toolMsg)
 		}
 	}
 }
@@ -213,20 +225,18 @@ func (s *ChatBiz) saveHistory(ctx context.Context, sessionID string, messages []
 		return nil
 	}
 
-	if err := s.allDb.Base.NocliMessageRepo.DeleteBySessionID(ctx, sessionID); err != nil {
-		return err
-	}
+	_ = s.allDb.Base.NocliSessionRepo.UpdateUpdatedAt(ctx, sessionID, time.Now().Unix())
 
 	now := time.Now().Unix()
 	models := make([]*dataBase.NocliMessageModel, 0, len(messages))
 	for _, msg := range messages {
-		data, err := json.Marshal(msg)
+		str, err := msg.MarshalJSON()
 		if err != nil {
 			return err
 		}
 		models = append(models, &dataBase.NocliMessageModel{
 			SessionID: sessionID,
-			Msg:       string(data),
+			Msg:       string(str),
 			CreatedAt: now,
 		})
 	}
