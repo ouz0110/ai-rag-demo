@@ -11,35 +11,35 @@ service Accounts {
   // 注册账号
   rpc Register(RegisterRequest) returns (RegisterResponse) {
     option (google.api.http) = {
-      post: "/base/sub/accounts/register"
+      post: "/base/v1/accounts/register"
       body: "*"
     };
   }
   // 登录
   rpc Login(LoginRequest) returns (LoginResponse) {
     option (google.api.http) = {
-      post: "/base/sub/accounts/login"
+      post: "/base/v1/accounts/login"
       body: "*"
     };
   }
   // 登出
   rpc Logout(LogoutRequest) returns (LogoutResponse) {
     option (google.api.http) = {
-      post: "/base/sub/accounts/logout"
+      post: "/base/v1/accounts/logout"
       body: "*"
     };
   }
   // 修改密码
   rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse) {
     option (google.api.http) = {
-      post: "/base/sub/accounts/changePassword"
+      post: "/base/v1/accounts/changePassword"
       body: "*"
     };
   }
   // 获取当前用户信息
   rpc GetUserInfo(GetUserInfoRequest) returns (Account) {
     option (google.api.http) = {
-      get: "/base/sub/accounts/userInfo"
+      get: "/base/v1/accounts/userInfo"
     };
   }
 }

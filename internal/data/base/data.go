@@ -9,7 +9,9 @@ import (
 
 type DB struct {
 	*database.DB
-	AccountRepo AccountRepo
+	AccountRepo      AccountRepo
+	NocliSessionRepo NocliSessionRepo
+	NocliMessageRepo NocliMessageRepo
 }
 
 const dbName = "base"
@@ -22,7 +24,9 @@ func NewDB(c *conf.Config) *DB {
 	}
 
 	return &DB{
-		DB:          db,
-		AccountRepo: AccountRepo{TableRepo: database.NewTableRepo[*AccountsModel](db)},
+		DB:               db,
+		AccountRepo:       AccountRepo{TableRepo: database.NewTableRepo[*AccountsModel](db)},
+		NocliSessionRepo:  NocliSessionRepo{TableRepo: database.NewTableRepo[*NocliSessionModel](db)},
+		NocliMessageRepo:  NocliMessageRepo{TableRepo: database.NewTableRepo[*NocliMessageModel](db)},
 	}
 }

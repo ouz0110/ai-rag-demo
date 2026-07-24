@@ -6,19 +6,19 @@ option go_package = "nocli/v1;nocli";
 import "google/api/annotations.proto";
 import "validate/validate.proto";
 
-// Nocli AI对话服务
+// Nocli AI补全服务
 service NocliChat {
   // 发送消息
-  rpc Chat(ChatRequest) returns (ChatResponse) {
+  rpc Completion(CompletionRequest) returns (CompletionResponse) {
     option (google.api.http) = {
-      post: "/nocli/sub/chat"
+      post: "/nocli/v1/completion"
       body: "*"
     };
   }
 }
 
-// 聊天请求
-message ChatRequest {
+// 补全请求
+message CompletionRequest {
   // 消息内容
   string message = 1 [(validate.rules).string.min_len = 1, (validate.rules).string.max_len = 4096];
   // 会话ID
@@ -27,8 +27,8 @@ message ChatRequest {
   string model = 3;
 }
 
-// 聊天响应
-message ChatResponse {
+// 补全响应
+message CompletionResponse {
   // 回复内容
   string reply = 1;
   // 会话ID

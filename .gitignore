@@ -9,5 +9,6 @@ cmd/server/__debug_bin*
 *.pb.*.go
 wire_gen.go
 config.local.yaml
-bin
-cmd/server
+bin/
+cmd/server/log
+log/

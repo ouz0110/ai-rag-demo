@@ -77,6 +77,15 @@ type OpenAI struct {
 	Model   string `json:"model"`
 }
 
+type NocliConfig struct {
+	WorkDir         string   `json:"work_dir"`
+	IgnoredPaths    []string `json:"ignored_paths"`
+	AllowedSuffixes []string `json:"allowed_suffixes"`
+	MaxReadFiles    int      `json:"max_read_files"`
+	MaxTotalBytes   int      `json:"max_total_bytes"`
+	ChunkLines      int      `json:"chunk_lines"`
+}
+
 type Config struct {
 	Secret      string `json:"secret"`
 	Name        string `json:"name"`
@@ -115,7 +124,8 @@ type Config struct {
 		MysqlDefaultCa string                  `json:"mysql_default_ca"`
 		Database       map[string]*DBConfig    `json:"database"`
 		OTel           *OTel                   `json:"otel"`
-		OpenAI         []*OpenAI               `json:"openai"`
+		OpenAI         *OpenAI                 `json:"openai"`
+		Nocli          *NocliConfig             `json:"nocli"`
 		Nacos          struct {
 			Addr      string `json:"addr"`
 			Port      string `json:"port"`

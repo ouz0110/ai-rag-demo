@@ -20,6 +20,6 @@ func NewChatService(
 	}
 }
 
-func (s *ChatService) Chat(ctx context.Context, req *pb.ChatRequest) (*pb.ChatResponse, error) {
-	return s.chatBiz.Chat(ctx, req)
+func (s *ChatService) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.CompletionResponse, error) {
+	return s.chatBiz.Completion(ctx, req)
 }

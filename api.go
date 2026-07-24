@@ -29,7 +29,6 @@ var (
 		"--go-grpc_out=paths=source_relative:./api",
 		"--go-errors_out=paths=source_relative:./api",
 		"--validate_out=lang=go:./api",
-		"--openapi_out=fq_schema_naming=true,default_response=false,enum_type=string:.",
 	}
 	// 异步编译列表
 	pathList = []string{
@@ -39,6 +38,18 @@ var (
 	}
 	// 同步编译列表
 	pathSyncList = []string{}
+
+	// OpenApiDirs 指定需要生成 openapi.yaml 的 proto 目录列表。
+	// 为空时不生成 openapi。会把这些目录的 proto 一起交给一次 protoc --openapi_out，
+	// 输出到 OpenApiOutDir 目录，最终生成一个统一的 openapi.yaml。
+	//
+	// 示例：
+	OpenApiDirs = []string{
+		"api/base/v1",
+		"api/nocli/v1",
+	}
+	// OpenApiOutDir openapi 输出目录，相对于项目根目录。
+	OpenApiOutDir = "."
 )
 
 func protocApiCompile(apiPath string) {
@@ -78,6 +89,63 @@ func protocApiCompile(apiPath string) {
 	fmt.Println("> protoc_api_compile:", apiPath, "done")
 }
 
+func protocOpenApiGenerate() {
+	if len(OpenApiDirs) == 0 {
+		return
+	}
+
+	protoList := make([]string, 0)
+	for _, dir := range OpenApiDirs {
+		err := filepath.Walk(dir, func(path string, info fs.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				return nil
+			}
+			if strings.HasSuffix(path, ".proto") {
+				protoList = append(protoList, path)
+			}
+			return nil
+		})
+		if err != nil {
+			log.Fatalln("> protoc_openapi_generate failure:", err)
+		}
+	}
+
+	if len(protoList) == 0 {
+		fmt.Println("> protoc_openapi_generate: no proto files found in OpenApiDirs, skip")
+		return
+	}
+
+	openapiOut := "--openapi_out=fq_schema_naming=true,default_response=false,enum_type=string:" + OpenApiOutDir
+	openapiOptions := []string{
+		"--proto_path=./api",
+		"--proto_path=./api/third_party",
+		openapiOut,
+	}
+	cmd := exec.Command("protoc", append(openapiOptions, protoList...)...)
+	commandStderrReader := bytes.NewBuffer(nil)
+	cmd.Stderr = commandStderrReader
+
+	err := cmd.Start()
+	if err != nil {
+		log.Fatalln("> protoc_openapi_generate failure:", err)
+	}
+
+	err = cmd.Wait()
+	if err != nil {
+		_, codeFile, codeLine, _ := runtime.Caller(0)
+		log.Fatalln(
+			"> protoc_openapi_generate failure:",
+			codeFile+":"+strconv.FormatInt(int64(codeLine), 10)+":", err,
+			"\n\ncommand:\n"+strings.Join(cmd.Args, " "),
+			"\n\noutput:\n"+commandStderrReader.String(),
+		)
+	}
+	fmt.Println("> protoc_openapi_generate:", OpenApiOutDir, "done")
+}
+
 func main() {
 	var wg sync.WaitGroup
 	semaphoreCh := make(chan struct{}, ConcurrencyNum)
@@ -104,6 +172,10 @@ func main() {
 	}
 
 	fmt.Println("> protoc_api_compile completed")
+
+	protocOpenApiGenerate()
+
+	fmt.Println("> protoc_openapi_generate completed")
 
 	// Protobuf编译产物引用路径处理
 
