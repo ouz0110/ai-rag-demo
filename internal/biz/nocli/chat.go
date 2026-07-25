@@ -90,30 +90,12 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 			return nil, fmt.Errorf("保存系统消息失败: %v", err)
 		}
 	} else {
-		session, ok, err := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID)
+		_, ok, err := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID)
 		if err != nil || !ok {
 			return nil, fmt.Errorf("会话不存在")
 		}
 
-		// 若之前有尚未确认的中断，当用户直接发送新提问时，自动作废/取消未决的中断
-		if session.Status == pb.SessionStatus_SS_INTERRUPTED {
-			pendingModels, err := s.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
-			if err == nil && len(pendingModels) > 0 {
-				cancelMsgs := make([]openai.ChatCompletionMessage, 0, len(pendingModels))
-				for _, pm := range pendingModels {
-					_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, pm.InterruptID, pb.InterruptStatus_IS_EXPIRED, now, user.Openid, "用户发送了新问题，自动取消旧中断")
-					cancelMsgs = append(cancelMsgs, openai.ChatCompletionMessage{
-						Role:       openai.ChatMessageRoleTool,
-						Content:    "操作已取消：用户提交了新的提问，放弃了此授权操作",
-						ToolCallID: pm.ToolCallID,
-					})
-				}
-				_ = s.saveHistory(ctx, sessionID, cancelMsgs)
-			}
-			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
-		} else {
-			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
-		}
+		_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
 		log.Debugw(ctx, "session_loaded", "session_id", sessionID)
 	}
 
@@ -122,8 +104,14 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		return nil, fmt.Errorf("加载对话历史失败: %v", err)
 	}
 
-	// 记录新消息的起始位置，用于后续保存
+	// 最外层记录增量保存的起点
 	newMessageStart := len(messages)
+
+	// 若之前有未处理中断，当用户直接发新提问时，自动作废旧中断并将取消消息 append 到内存消息数组中
+	cancelMsgs, _ := s.cancelPendingInterruptsOnNewCompletion(ctx, sessionID)
+	if len(cancelMsgs) > 0 {
+		messages = append(messages, cancelMsgs...)
+	}
 
 	messages = append(messages, openai.ChatCompletionMessage{
 		Role: "user", Content: req.Message,
@@ -139,8 +127,11 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		return nil, fmt.Errorf("对话失败: %v", err)
 	}
 
-	if err := s.saveHistory(ctx, sessionID, loopRes.Messages[newMessageStart:]); err != nil {
-		return nil, fmt.Errorf("保存对话历史失败: %v", err)
+	// 🎯 消息存储固定在最外层：统一拉取全量新产生的 messages 批量落盘
+	if len(loopRes.Messages) > newMessageStart {
+		if err := s.saveHistory(ctx, sessionID, loopRes.Messages[newMessageStart:]); err != nil {
+			return nil, fmt.Errorf("保存对话历史失败: %v", err)
+		}
 	}
 
 	if loopRes.Status == pb.SessionStatus_SS_IDLE {
@@ -182,47 +173,40 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 		return nil, fmt.Errorf("该中断已被处理或已失效")
 	}
 
-	now := time.Now().Unix()
-	var toolResult string
-	approvedTools := make(map[string]bool)
-
-	if req.Action == pb.ResumeAction_RA_APPROVE {
-		// 若用户选择 AS_SESSION_TOOL 作用域，同意本轮后续同名工具免再审批
-		if req.ApproveScope == pb.ApproveScope_AS_SESSION_TOOL {
-			approvedTools[interrupt.ToolName] = true
-		}
-
-		result, err := s.toolRegistry.Call(ctx, interrupt.ToolName, interrupt.Arguments)
-		if err != nil {
-			toolResult = fmt.Sprintf("工具执行失败: %v", err)
-		} else {
-			toolResult = result
-		}
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_APPROVED, now, user.Openid, req.Reason)
-	} else {
-		reason := req.Reason
-		if reason == "" {
-			reason = "用户拒绝执行该操作"
-		}
-		toolResult = fmt.Sprintf("操作被用户拒绝: %s", reason)
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_REJECTED, now, user.Openid, reason)
-	}
-
-	toolMsg := openai.ChatCompletionMessage{
-		Role:       openai.ChatMessageRoleTool,
-		Content:    toolResult,
-		ToolCallID: interrupt.ToolCallID,
-	}
-
-	if err := s.saveHistory(ctx, sessionID, []openai.ChatCompletionMessage{toolMsg}); err != nil {
-		return nil, fmt.Errorf("保存工具操作结果失败: %v", err)
-	}
-
-	_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
-
 	messages, err := s.loadHistory(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("加载对话历史失败: %v", err)
+	}
+
+	// 最外层记录增量保存的起点
+	newMessageStart := len(messages)
+
+	// 1. 调用 executeResumeTool 执行单次中断决策并获取产生的 Tool 消息
+	toolMsg, err := s.executeResumeTool(ctx, user.Openid, interrupt, req.Action, req.Reason)
+	if err != nil {
+		return nil, fmt.Errorf("执行中断恢复工具失败: %v", err)
+	}
+	messages = append(messages, toolMsg)
+
+	// 2. 检查同会话中是否还有其他处于 IS_PENDING 状态的待审批中断
+	remainingPendingModels, err := s.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
+	if err == nil && len(remainingPendingModels) > 0 {
+		// 尚有待审批中断：在最外层落盘已产生的 Tool 消息，会话保持 SS_INTERRUPTED，不进入 runChatLoop
+		_ = s.saveHistory(ctx, sessionID, messages[newMessageStart:])
+		return &pb.CompletionResponse{
+			Reply:            "当前操作已审批，尚有其他待授权确认的操作，请继续审批",
+			SessionId:        sessionID,
+			Status:           pb.SessionStatus_SS_INTERRUPTED,
+			PendingToolCalls: buildPendingToolCalls(remainingPendingModels),
+		}, nil
+	}
+
+	// 3. 所有 Pending 中断均已处理，恢复会话状态为 SS_RUNNING 并启动 Agent 循环
+	_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
+
+	approvedTools := make(map[string]bool)
+	if req.Action == pb.ResumeAction_RA_APPROVE && req.ApproveScope == pb.ApproveScope_AS_SESSION_TOOL {
+		approvedTools[interrupt.ToolName] = true
 	}
 
 	tools := s.toolRegistry.BuildTools()
@@ -234,7 +218,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 		return nil, fmt.Errorf("恢复对话后继续执行失败: %v", err)
 	}
 
-	newMessageStart := len(messages)
+	// 🎯 消息存储固定在最外层：统一将 Resume 生成的 Tool 消息 + 后续 LLM 生成的新消息进行单次批量保存
 	if len(loopRes.Messages) > newMessageStart {
 		if err := s.saveHistory(ctx, sessionID, loopRes.Messages[newMessageStart:]); err != nil {
 			return nil, fmt.Errorf("保存恢复后的对话历史失败: %v", err)
@@ -319,72 +303,24 @@ func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []
 			}, nil
 		}
 
-		// 检查是否有任何工具需要人工审批确认
-		var pendingInterrupts []*dataBase.NocliInterruptModel
-		var pendingToolCalls []*pb.PendingToolCall
-
-		for _, tc := range msg.ToolCalls {
-			toolName := tc.Function.Name
-			if s.toolRegistry.RequiresApproval(toolName) {
-				// 若用户在 Resume 时选择同意本轮同名工具免审批，自动跳过中断拦截！
-				if approvedTools[toolName] {
-					log.Debugw(ctx, "tool_approval_bypassed", append(baseFields, "tool_name", toolName, "reason", "approved_in_current_scope")...)
-					continue
-				}
-
-				interruptID := utils.NewUUID()
-				pendingInterrupts = append(pendingInterrupts, &dataBase.NocliInterruptModel{
-					InterruptID: interruptID,
-					SessionID:   sessionID,
-					Status:      pb.InterruptStatus_IS_PENDING,
-					ToolCallID:  tc.ID,
-					ToolName:    toolName,
-					Arguments:   tc.Function.Arguments,
-					CreatedAt:   time.Now().Unix(),
-				})
-				pendingToolCalls = append(pendingToolCalls, &pb.PendingToolCall{
-					InterruptId: interruptID,
-					ToolCallId:  tc.ID,
-					ToolName:    toolName,
-					Arguments:   tc.Function.Arguments,
-				})
-			}
+		// 调用独立的 processToolCalls 处理（不插入单独的 saveHistory）
+		res, err := s.processToolCalls(ctx, sessionID, baseFields, msg.ToolCalls, approvedTools, &totalToolCalls)
+		if err != nil {
+			return nil, err
 		}
 
-		if len(pendingInterrupts) > 0 {
-			if err := s.allDb.Base.NocliInterruptRepo.CreateBatch(ctx, pendingInterrupts); err != nil {
-				return nil, fmt.Errorf("创建中断记录失败: %v", err)
-			}
-			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_INTERRUPTED)
+		if len(res.ExecutedMsgs) > 0 {
+			messages = append(messages, res.ExecutedMsgs...)
+		}
 
-			log.Debugw(ctx, "chat_loop_interrupted", append(baseFields, "pending_count", len(pendingInterrupts))...)
-
+		// 若发生了中断，直接返回中断结构，消息的批量落盘由最外层统一接管
+		if res.HasInterrupt {
 			return &LoopResult{
 				Messages:         messages,
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
-				PendingToolCalls: pendingToolCalls,
+				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
 			}, nil
-		}
-
-		for _, tc := range msg.ToolCalls {
-			totalToolCalls++
-			log.Debugw(ctx, "tool_call", append(baseFields, "iteration", iteration, "tool_index", totalToolCalls, "tool_id", tc.ID, "tool_name", tc.Function.Name, "args_len", len(tc.Function.Arguments))...)
-
-			result, err := s.toolRegistry.Call(ctx, tc.Function.Name, tc.Function.Arguments)
-			if err != nil {
-				result = fmt.Sprintf("工具执行失败: %v", err)
-				log.Debugw(ctx, "tool_result", append(baseFields, "iteration", iteration, "tool_id", tc.ID, "tool_name", tc.Function.Name, "result_len", len(result), "error", err)...)
-			} else {
-				log.Debugw(ctx, "tool_result", append(baseFields, "iteration", iteration, "tool_id", tc.ID, "tool_name", tc.Function.Name, "result_len", len(result))...)
-			}
-
-			toolMsg := openai.ChatCompletionMessage{
-				Role:       openai.ChatMessageRoleTool,
-				Content:    result,
-				ToolCallID: tc.ID,
-			}
-			messages = append(messages, toolMsg)
 		}
 	}
 }
