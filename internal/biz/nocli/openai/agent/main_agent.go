@@ -1,49 +1,50 @@
 package agent
 
 import (
-	"ai-rag-demo/internal/pkg/skill"
 	"fmt"
 	"strings"
+
+	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
+	"ai-rag-demo/internal/pkg/skill"
 )
 
-const AgentMain = "main"
+type MainAgent struct {
+	*base.BaseAgent
+}
 
-// MainAgent 通用多模态与系统工具/Skill 调度主 Agent
-type MainAgent struct{}
-
-func NewMainAgent() *MainAgent {
-	return &MainAgent{}
+func NewMainAgent(base *base.BaseAgent) *MainAgent {
+	return &MainAgent{
+		BaseAgent: base,
+	}
 }
 
 func (a *MainAgent) Name() string {
-	return AgentMain
+	return "main"
 }
 
 func (a *MainAgent) Description() string {
-	return "通用智能 AI 助手，具备多模态意图理解、终端 Shell 命令调度、网页与资源分析及 Skill 扩展指令执行的全功能能力。"
+	return "通用多模态 ReAct 交互 Agent，支持文件检索与终端交互"
+}
+
+func (a *MainAgent) MaxIterations() int {
+	return a.GetMaxIterationsForAgent(a.Name(), 15)
 }
 
 func (a *MainAgent) SystemPrompt(workDir string, skillMgr *skill.Manager) string {
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf(`你是通用智能 AI 助手。你拥有强大的通用任务分析、多模态意图理解、系统工具调度与 Skill 扩展能力。
 
-## 🎯 核心原则
-1. **高效准确**：理解用户意图，解答通用问题，并通过工具和技能解决实际任务。
-2. **安全沙箱**：所有文件读取与终端 Shell 命令操作均在安全范围内进行。
+	sb.WriteString(fmt.Sprintf(`你是一个强大且严谨的 Agent 助手，当前工作目录为：%s。
 
-## 📁 当前工作目录
-%s
-
-## 🛠️ 系统基础工具
-1. **terminal**：在终端执行 Shell 命令或运行技能脚本（如网页抓取、环境探索、编译构建等）。只读指令自动放行，修改/高危指令自动触发审批。
-2. **list_files**：探索项目目录结构，了解文件分布。
-3. **read_files**：读取本地文件内容或加载 Skill 的 SOP 指令文件 (SKILL.md)。
+核心行为准则：
+1. 【禁止假想】绝不捏造文件路径、代码或函数签名，任何信息必须通过工具验证。
+2. 【严格控制】当任务涉及跨步骤操作时，理清步骤依次执行。
+3. 【工具使用】按需调用下发的 Tools。如果需要终端执行命令，使用 terminal 工具。
 `, workDir))
 
 	if skillMgr != nil {
 		skillPrompt := skillMgr.BuildLevel1PromptForAgent(a.Name())
 		if skillPrompt != "" {
-			sb.WriteString(skillPrompt)
+			sb.WriteString("\n" + skillPrompt)
 		}
 	}
 

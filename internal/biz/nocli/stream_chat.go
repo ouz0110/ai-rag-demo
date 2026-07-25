@@ -3,36 +3,53 @@ package nocli
 import (
 	"context"
 	"fmt"
+	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
-	"ai-rag-demo/internal/pkg/log"
+	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 
-	openai "github.com/sashabaranov/go-openai"
+	dataBase "ai-rag-demo/internal/data/base"
+	"ai-rag-demo/internal/pkg/log"
 )
 
-// StreamCompletion 流式处理新提问 (由 Service 层直接传入 StreamEmitter 闭包，实现零延迟实时分发)
-func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionRequest, emitter StreamEmitter) error {
+// StreamCompletion 流式完成接口 (由 Service 层直接传入 StreamEmitter 闭包)
+func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionRequest, emitter agentbase.StreamEmitter) error {
 	if emitter == nil {
-		emitter = NoopStreamEmitter
+		emitter = agentbase.NoopStreamEmitter
 	}
 
-	sessionID, err := s.initOrCreateSession(ctx, req.SessionId, req.Message)
+	sessionID, err := s.sessionMgr.InitOrCreateSession(ctx, req.SessionId, req.Message)
 	if err != nil {
 		return err
 	}
 
-	messages, newMessageStart, err := s.prepareMessagesForCompletion(ctx, sessionID, req.Message)
+	messages, newMessageStart, err := s.sessionMgr.PrepareMessagesForCompletion(ctx, sessionID, req.Message)
 	if err != nil {
 		return err
+	}
+
+	ag, ok := s.agentRegistry.Get("main")
+	if !ok {
+		return fmt.Errorf("未找到默认 main agent")
 	}
 
 	tools := s.toolRegistry.BuildTools()
-	model := s.resolveModel(req.Model)
-	approvedTools := s.loadSessionApprovedTools(ctx, sessionID)
+	model := req.Model
+	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
 	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "model", model)
 
-	loopRes, err := s.runStreamChatLoop(ctx, sessionID, messages, tools, model, approvedTools, nil, emitter)
+	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
+	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
+		AgentName:     ag.Name(),
+		SessionID:     sessionID,
+		Messages:      messages,
+		Tools:         tools,
+		Model:         model,
+		ApprovedTools: approvedTools,
+		Emitter:       emitter,
+		Fetcher:       fetcher,
+	})
 	if err != nil {
 		log.Errorw(ctx, "stream_completion_error", "session_id", sessionID, "error", err)
 		emitter(&pb.StreamChunk{
@@ -44,8 +61,20 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		return err
 	}
 
-	// 🎯 消息存储固定在最外层：增量批量落盘
-	if err := s.finalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], loopRes.Status); err != nil {
+	var pendingInterrupt *dataBase.NocliInterruptModel
+	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED && len(loopRes.PendingToolCalls) > 0 {
+		pendingInterrupt = &dataBase.NocliInterruptModel{
+			InterruptID: loopRes.PendingToolCalls[0].InterruptId,
+			SessionID:   sessionID,
+			Status:      pb.InterruptStatus_IS_PENDING,
+			ToolCallID:  loopRes.PendingToolCalls[0].ToolCallId,
+			ToolName:    loopRes.PendingToolCalls[0].ToolName,
+			Arguments:   loopRes.PendingToolCalls[0].Arguments,
+			CreatedAt:   time.Now().Unix(),
+		}
+	}
+
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
 		return err
 	}
 
@@ -53,28 +82,44 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 }
 
 // StreamResume 流式恢复执行 (由 Service 层直接传入 StreamEmitter 闭包)
-func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitter StreamEmitter) error {
+func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitter agentbase.StreamEmitter) error {
 	if emitter == nil {
-		emitter = NoopStreamEmitter
+		emitter = agentbase.NoopStreamEmitter
 	}
 
-	approvedTools, rejectedTools, err := s.validateAndPrepareResume(ctx, req)
+	approvedTools, rejectedTools, err := s.sessionMgr.ValidateAndPrepareResume(ctx, req)
 	if err != nil {
 		return err
 	}
 
-	messages, err := s.loadHistory(ctx, req.SessionId)
+	messages, err := s.sessionMgr.LoadHistory(ctx, req.SessionId)
 	if err != nil {
 		return fmt.Errorf("加载对话历史失败: %v", err)
 	}
 
+	ag, ok := s.agentRegistry.Get("main")
+	if !ok {
+		return fmt.Errorf("未找到默认 main agent")
+	}
+
 	newMessageStart := len(messages)
 	tools := s.toolRegistry.BuildTools()
-	model := s.resolveModel(req.Model)
+	model := req.Model
 
 	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "model", model)
 
-	loopRes, err := s.runStreamChatLoop(ctx, req.SessionId, messages, tools, model, approvedTools, rejectedTools, emitter)
+	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
+	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
+		AgentName:     ag.Name(),
+		SessionID:     req.SessionId,
+		Messages:      messages,
+		Tools:         tools,
+		Model:         model,
+		ApprovedTools: approvedTools,
+		RejectedTools: rejectedTools,
+		Emitter:       emitter,
+		Fetcher:       fetcher,
+	})
 	if err != nil {
 		log.Errorw(ctx, "stream_resume_error", "session_id", req.SessionId, "error", err)
 		emitter(&pb.StreamChunk{
@@ -86,24 +131,22 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		return err
 	}
 
-	if err := s.finalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], loopRes.Status); err != nil {
+	var pendingInterrupt *dataBase.NocliInterruptModel
+	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED && len(loopRes.PendingToolCalls) > 0 {
+		pendingInterrupt = &dataBase.NocliInterruptModel{
+			InterruptID: loopRes.PendingToolCalls[0].InterruptId,
+			SessionID:   req.SessionId,
+			Status:      pb.InterruptStatus_IS_PENDING,
+			ToolCallID:  loopRes.PendingToolCalls[0].ToolCallId,
+			ToolName:    loopRes.PendingToolCalls[0].ToolName,
+			Arguments:   loopRes.PendingToolCalls[0].Arguments,
+			CreatedAt:   time.Now().Unix(),
+		}
+	}
+
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
 		return err
 	}
 
 	return nil
-}
-
-func (s *ChatBiz) runStreamChatLoop(
-	ctx context.Context,
-	sessionID string,
-	messages []openai.ChatCompletionMessage,
-	tools []openai.Tool,
-	model string,
-	approvedTools map[string]bool,
-	rejectedTools map[string]string,
-	emitter StreamEmitter,
-) (*LoopResult, error) {
-	// 流式 fetcher 闭包：直接使用上层注入的 emitter 实时推送 Token 帧
-	fetcher := GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
-	return s.runAgentLoop(ctx, sessionID, messages, tools, model, approvedTools, rejectedTools, emitter, fetcher)
 }

@@ -77,13 +77,19 @@ type OpenAI struct {
 	Model   string `json:"model"`
 }
 
+type AgentConfig struct {
+	MaxIterations int `json:"max_iterations"`
+}
+
 type NocliConfig struct {
-	WorkDir         string   `json:"work_dir"`
-	IgnoredPaths    []string `json:"ignored_paths"`
-	AllowedSuffixes []string `json:"allowed_suffixes"`
-	MaxReadFiles    int      `json:"max_read_files"`
-	MaxTotalBytes   int      `json:"max_total_bytes"`
-	ChunkLines      int      `json:"chunk_lines"`
+	WorkDir            string                  `json:"work_dir"`
+	IgnoredPaths       []string                `json:"ignored_paths"`
+	AllowedSuffixes    []string                `json:"allowed_suffixes"`
+	MaxReadFiles       int                     `json:"max_read_files"`
+	MaxTotalBytes      int                     `json:"max_total_bytes"`
+	ChunkLines         int                     `json:"chunk_lines"`
+	MaxAgentIterations int                     `json:"max_agent_iterations"`
+	Agents             map[string]*AgentConfig `json:"agents"`
 }
 
 type SkillConfig struct {

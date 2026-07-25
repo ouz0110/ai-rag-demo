@@ -7,15 +7,16 @@ import (
 
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli/openai/agent"
+	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	tool "ai-rag-demo/internal/biz/nocli/openai/tool"
+	"ai-rag-demo/internal/biz/nocli/session"
 	"ai-rag-demo/internal/cache"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
+	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
 	"ai-rag-demo/internal/pkg/skill"
-
-	openai "github.com/sashabaranov/go-openai"
 )
 
 type ChatBiz struct {
@@ -24,6 +25,7 @@ type ChatBiz struct {
 	toolRegistry    *tool.Registry
 	agentRegistry   *agent.Registry
 	skillManager    *skill.Manager
+	sessionMgr      *session.SessionManager
 	cfg             *conf.Config
 	allDb           *data.DB
 }
@@ -43,121 +45,169 @@ func NewChatBiz(
 		log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
 	}
 
+	toolReg := tool.NewRegistry(cfg)
+	baseAgent := agentbase.NewBaseAgent(cfg, toolReg)
+	agentReg := agent.NewRegistry(baseAgent)
+	skillMgr := skill.NewManager(skillReg)
+
+	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg, skillMgr)
+
 	return &ChatBiz{
 		cache:           cache,
 		openaiChatModel: openaiChatModel,
-		toolRegistry:    tool.NewRegistry(cfg),
-		agentRegistry:   agent.NewRegistry(),
-		skillManager:    skill.NewManager(skillReg),
+		toolRegistry:    toolReg,
+		agentRegistry:   agentReg,
+		skillManager:    skillMgr,
+		sessionMgr:      sessionMgr,
 		cfg:             cfg,
 		allDb:           allDb,
 	}
 }
 
 func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.StreamChunk, error) {
-	sessionID, err := s.initOrCreateSession(ctx, req.SessionId, req.Message)
+	sessionID, err := s.sessionMgr.InitOrCreateSession(ctx, req.SessionId, req.Message)
 	if err != nil {
 		return nil, err
 	}
 
-	messages, newMessageStart, err := s.prepareMessagesForCompletion(ctx, sessionID, req.Message)
+	messages, newMessageStart, err := s.sessionMgr.PrepareMessagesForCompletion(ctx, sessionID, req.Message)
 	if err != nil {
 		return nil, err
+	}
+
+	ag, ok := s.agentRegistry.Get("main")
+	if !ok {
+		return nil, fmt.Errorf("未找到默认 main agent")
 	}
 
 	tools := s.toolRegistry.BuildTools()
-	model := s.resolveModel(req.Model)
-	approvedTools := s.loadSessionApprovedTools(ctx, sessionID)
+	model := req.Model
+	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
 	start := time.Now()
-	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, model, approvedTools, nil)
+	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
+	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
+		AgentName:     ag.Name(),
+		SessionID:     sessionID,
+		Messages:      messages,
+		Tools:         tools,
+		Model:         model,
+		ApprovedTools: approvedTools,
+		Fetcher:       fetcher,
+	})
 	duration := time.Since(start)
+
 	if err != nil {
 		log.Errorw(ctx, "completion_error", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "error", err)
-		return nil, fmt.Errorf("对话失败: %v", err)
+		return &pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_ERROR,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_IDLE,
+			Error:     &pb.StreamError{Code: 500, Message: err.Error()},
+		}, nil
 	}
 
-	if err := s.finalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], loopRes.Status); err != nil {
+	var pendingInterrupt *dataBase.NocliInterruptModel
+	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED && len(loopRes.PendingToolCalls) > 0 {
+		pendingInterrupt = &dataBase.NocliInterruptModel{
+			InterruptID: loopRes.PendingToolCalls[0].InterruptId,
+			SessionID:   sessionID,
+			Status:      pb.InterruptStatus_IS_PENDING,
+			ToolCallID:  loopRes.PendingToolCalls[0].ToolCallId,
+			ToolName:    loopRes.PendingToolCalls[0].ToolName,
+			Arguments:   loopRes.PendingToolCalls[0].Arguments,
+			CreatedAt:   time.Now().Unix(),
+		}
+	}
+
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
 		return nil, err
 	}
 
-	log.Debugw(ctx, "completion_end", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "reply_len", len(loopRes.Reply))
+	log.Debugw(ctx, "completion_success", "session_id", sessionID, "status", loopRes.Status, "duration_ms", duration.Milliseconds())
 
-	event := pb.StreamEventType_SET_DONE
 	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED {
-		event = pb.StreamEventType_SET_INTERRUPT
+		return &pb.StreamChunk{
+			Event:            pb.StreamEventType_SET_INTERRUPT,
+			SessionId:        sessionID,
+			Status:           pb.SessionStatus_SS_INTERRUPTED,
+			PendingToolCalls: loopRes.PendingToolCalls,
+		}, nil
 	}
 
 	return &pb.StreamChunk{
-		Event:            event,
-		SessionId:        sessionID,
-		Status:           loopRes.Status,
-		Text:             loopRes.Reply,
-		PendingToolCalls: loopRes.PendingToolCalls,
+		Event:     pb.StreamEventType_SET_DONE,
+		SessionId: sessionID,
+		Status:    pb.SessionStatus_SS_IDLE,
+		Text:      loopRes.Reply,
 	}, nil
 }
 
 func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.StreamChunk, error) {
-	approvedTools, rejectedTools, err := s.validateAndPrepareResume(ctx, req)
+	approvedTools, rejectedTools, err := s.sessionMgr.ValidateAndPrepareResume(ctx, req)
 	if err != nil {
 		return nil, err
 	}
 
-	messages, err := s.loadHistory(ctx, req.SessionId)
+	messages, err := s.sessionMgr.LoadHistory(ctx, req.SessionId)
 	if err != nil {
 		return nil, fmt.Errorf("加载对话历史失败: %v", err)
 	}
 
-	newMessageStart := len(messages)
-	tools := s.toolRegistry.BuildTools()
-	model := s.resolveModel(req.Model)
-	start := time.Now()
-
-	loopRes, err := s.runChatLoop(ctx, req.SessionId, messages, tools, model, approvedTools, rejectedTools)
-	duration := time.Since(start)
-	if err != nil {
-		log.Errorw(ctx, "resume_error", "session_id", req.SessionId, "duration_ms", duration.Milliseconds(), "error", err)
-		return nil, fmt.Errorf("恢复对话后继续执行失败: %v", err)
+	ag, ok := s.agentRegistry.Get("main")
+	if !ok {
+		return nil, fmt.Errorf("未找到默认 main agent")
 	}
 
-	if err := s.finalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], loopRes.Status); err != nil {
+	newMessageStart := len(messages)
+	tools := s.toolRegistry.BuildTools()
+	model := req.Model
+
+	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
+	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
+		AgentName:     ag.Name(),
+		SessionID:     req.SessionId,
+		Messages:      messages,
+		Tools:         tools,
+		Model:         model,
+		ApprovedTools: approvedTools,
+		RejectedTools: rejectedTools,
+		Fetcher:       fetcher,
+	})
+	if err != nil {
 		return nil, err
 	}
 
-	event := pb.StreamEventType_SET_DONE
+	var pendingInterrupt *dataBase.NocliInterruptModel
+	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED && len(loopRes.PendingToolCalls) > 0 {
+		pendingInterrupt = &dataBase.NocliInterruptModel{
+			InterruptID: loopRes.PendingToolCalls[0].InterruptId,
+			SessionID:   req.SessionId,
+			Status:      pb.InterruptStatus_IS_PENDING,
+			ToolCallID:  loopRes.PendingToolCalls[0].ToolCallId,
+			ToolName:    loopRes.PendingToolCalls[0].ToolName,
+			Arguments:   loopRes.PendingToolCalls[0].Arguments,
+			CreatedAt:   time.Now().Unix(),
+		}
+	}
+
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
+		return nil, err
+	}
+
 	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED {
-		event = pb.StreamEventType_SET_INTERRUPT
+		return &pb.StreamChunk{
+			Event:            pb.StreamEventType_SET_INTERRUPT,
+			SessionId:        req.SessionId,
+			Status:           pb.SessionStatus_SS_INTERRUPTED,
+			PendingToolCalls: loopRes.PendingToolCalls,
+		}, nil
 	}
 
 	return &pb.StreamChunk{
-		Event:            event,
-		SessionId:        req.SessionId,
-		Status:           loopRes.Status,
-		Text:             loopRes.Reply,
-		PendingToolCalls: loopRes.PendingToolCalls,
+		Event:     pb.StreamEventType_SET_DONE,
+		SessionId: req.SessionId,
+		Status:    pb.SessionStatus_SS_IDLE,
+		Text:      loopRes.Reply,
 	}, nil
-}
-
-func (s *ChatBiz) runChatLoop(
-	ctx context.Context,
-	sessionID string,
-	messages []openai.ChatCompletionMessage,
-	tools []openai.Tool,
-	model string,
-	approvedTools map[string]bool,
-	rejectedTools map[string]string,
-) (*LoopResult, error) {
-	// 非流式 fetcher 闭包
-	fetcher := GetChatFetcher(s.openaiChatModel)
-
-	// 🎯 非流式模式：传入 NoopStreamEmitter 作为事件推送闭包
-	return s.runAgentLoop(ctx, sessionID, messages, tools, model, approvedTools, rejectedTools, NoopStreamEmitter, fetcher)
-}
-
-func truncateText(text string, maxLen int) string {
-	runes := []rune(text)
-	if len(runes) > maxLen {
-		return string(runes[:maxLen])
-	}
-	return text
 }

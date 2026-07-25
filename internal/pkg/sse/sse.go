@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	pb "ai-rag-demo/api/nocli/v1"
-	"ai-rag-demo/internal/biz/nocli"
+	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 
 	"google.golang.org/protobuf/encoding/protojson"
 )
@@ -24,7 +24,7 @@ func SetHeaders(w http.ResponseWriter) {
 
 // NewStreamEmitter 创建通用且高复用的 SSE 流式推送闭包
 // 自动完成：1. Headers 设置 2. Flusher 断言 3. Protobuf/JSON 序列化 4. 实时 Flush 吐给 Socket
-func NewStreamEmitter(w http.ResponseWriter) (nocli.StreamEmitter, error) {
+func NewStreamEmitter(w http.ResponseWriter) (agentbase.StreamEmitter, error) {
 	SetHeaders(w)
 
 	flusher, ok := w.(http.Flusher)
