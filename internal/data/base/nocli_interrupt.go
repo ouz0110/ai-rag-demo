@@ -89,7 +89,7 @@ func (s *NocliInterruptRepo) GetByInterruptID(ctx context.Context, interruptID s
 
 func (s *NocliInterruptRepo) GetPendingBySessionID(ctx context.Context, sessionID string) ([]NocliInterruptModel, error) {
 	var list []NocliInterruptModel
-	if err := s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("session_id=? AND status=?", sessionID, pb.InterruptStatus_INTERRUPT_STATUS_PENDING).Order("created_at ASC").Find(&list).Error; err != nil {
+	if err := s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("session_id=? AND status=?", sessionID, pb.InterruptStatus_IS_PENDING).Order("created_at ASC").Find(&list).Error; err != nil {
 		return nil, err
 	}
 	return list, nil

@@ -70,7 +70,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 			SessionID: sessionID,
 			Openid:    user.Openid,
 			Name:      truncateText(req.Message, 30),
-			Status:    pb.SessionStatus_SESSION_STATUS_RUNNING,
+			Status:    pb.SessionStatus_SS_RUNNING,
 			CreatedAt: now,
 			UpdatedAt: now,
 		}
@@ -96,12 +96,12 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		}
 
 		// 若之前有尚未确认的中断，当用户直接发送新提问时，自动作废/取消未决的中断
-		if session.Status == pb.SessionStatus_SESSION_STATUS_INTERRUPTED {
+		if session.Status == pb.SessionStatus_SS_INTERRUPTED {
 			pendingModels, err := s.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
 			if err == nil && len(pendingModels) > 0 {
 				cancelMsgs := make([]openai.ChatCompletionMessage, 0, len(pendingModels))
 				for _, pm := range pendingModels {
-					_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, pm.InterruptID, pb.InterruptStatus_INTERRUPT_STATUS_EXPIRED, now, user.Openid, "用户发送了新问题，自动取消旧中断")
+					_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, pm.InterruptID, pb.InterruptStatus_IS_EXPIRED, now, user.Openid, "用户发送了新问题，自动取消旧中断")
 					cancelMsgs = append(cancelMsgs, openai.ChatCompletionMessage{
 						Role:       openai.ChatMessageRoleTool,
 						Content:    "操作已取消：用户提交了新的提问，放弃了此授权操作",
@@ -110,9 +110,9 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 				}
 				_ = s.saveHistory(ctx, sessionID, cancelMsgs)
 			}
-			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SESSION_STATUS_RUNNING)
+			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
 		} else {
-			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SESSION_STATUS_RUNNING)
+			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
 		}
 		log.Debugw(ctx, "session_loaded", "session_id", sessionID)
 	}
@@ -132,7 +132,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 	tools := s.toolRegistry.BuildTools()
 
 	start := time.Now()
-	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, req.Model)
+	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, req.Model, nil)
 	duration := time.Since(start)
 	if err != nil {
 		log.Errorw(ctx, "completion_error", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "error", err)
@@ -143,8 +143,8 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (rs
 		return nil, fmt.Errorf("保存对话历史失败: %v", err)
 	}
 
-	if loopRes.Status == pb.SessionStatus_SESSION_STATUS_IDLE {
-		_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SESSION_STATUS_IDLE)
+	if loopRes.Status == pb.SessionStatus_SS_IDLE {
+		_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_IDLE)
 	}
 
 	log.Debugw(ctx, "completion_end", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "reply_len", len(loopRes.Reply))
@@ -170,7 +170,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 	if err != nil || !ok {
 		return nil, fmt.Errorf("会话不存在")
 	}
-	if session.Status != pb.SessionStatus_SESSION_STATUS_INTERRUPTED {
+	if session.Status != pb.SessionStatus_SS_INTERRUPTED {
 		return nil, fmt.Errorf("会话当前不处于中断挂起状态")
 	}
 
@@ -178,28 +178,34 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 	if err != nil || !ok {
 		return nil, fmt.Errorf("中断记录不存在")
 	}
-	if interrupt.Status != pb.InterruptStatus_INTERRUPT_STATUS_PENDING {
+	if interrupt.Status != pb.InterruptStatus_IS_PENDING {
 		return nil, fmt.Errorf("该中断已被处理或已失效")
 	}
 
 	now := time.Now().Unix()
 	var toolResult string
+	approvedTools := make(map[string]bool)
 
-	if req.Action == pb.ResumeAction_RESUME_ACTION_APPROVE {
+	if req.Action == pb.ResumeAction_RA_APPROVE {
+		// 若用户选择 AS_SESSION_TOOL 作用域，同意本轮后续同名工具免再审批
+		if req.ApproveScope == pb.ApproveScope_AS_SESSION_TOOL {
+			approvedTools[interrupt.ToolName] = true
+		}
+
 		result, err := s.toolRegistry.Call(ctx, interrupt.ToolName, interrupt.Arguments)
 		if err != nil {
 			toolResult = fmt.Sprintf("工具执行失败: %v", err)
 		} else {
 			toolResult = result
 		}
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_INTERRUPT_STATUS_APPROVED, now, user.Openid, req.Reason)
+		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_APPROVED, now, user.Openid, req.Reason)
 	} else {
 		reason := req.Reason
 		if reason == "" {
 			reason = "用户拒绝执行该操作"
 		}
 		toolResult = fmt.Sprintf("操作被用户拒绝: %s", reason)
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_INTERRUPT_STATUS_REJECTED, now, user.Openid, reason)
+		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_REJECTED, now, user.Openid, reason)
 	}
 
 	toolMsg := openai.ChatCompletionMessage{
@@ -212,7 +218,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 		return nil, fmt.Errorf("保存工具操作结果失败: %v", err)
 	}
 
-	_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SESSION_STATUS_RUNNING)
+	_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
 
 	messages, err := s.loadHistory(ctx, sessionID)
 	if err != nil {
@@ -221,7 +227,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 
 	tools := s.toolRegistry.BuildTools()
 	start := time.Now()
-	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, req.Model)
+	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, req.Model, approvedTools)
 	duration := time.Since(start)
 	if err != nil {
 		log.Errorw(ctx, "resume_error", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "error", err)
@@ -235,8 +241,8 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 		}
 	}
 
-	if loopRes.Status == pb.SessionStatus_SESSION_STATUS_IDLE {
-		_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SESSION_STATUS_IDLE)
+	if loopRes.Status == pb.SessionStatus_SS_IDLE {
+		_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_IDLE)
 	}
 
 	return &pb.CompletionResponse{
@@ -247,9 +253,12 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Comple
 	}, nil
 }
 
-func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []openai.ChatCompletionMessage, tools []openai.Tool, model string) (*LoopResult, error) {
+func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []openai.ChatCompletionMessage, tools []openai.Tool, model string, approvedTools map[string]bool) (*LoopResult, error) {
 	if model == "" {
 		model = s.cfg.Source.OpenAI.Model
+	}
+	if approvedTools == nil {
+		approvedTools = make(map[string]bool)
 	}
 
 	baseFields := []interface{}{
@@ -306,7 +315,7 @@ func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []
 			return &LoopResult{
 				Messages: messages,
 				Reply:    msg.Content,
-				Status:   pb.SessionStatus_SESSION_STATUS_IDLE,
+				Status:   pb.SessionStatus_SS_IDLE,
 			}, nil
 		}
 
@@ -315,21 +324,28 @@ func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []
 		var pendingToolCalls []*pb.PendingToolCall
 
 		for _, tc := range msg.ToolCalls {
-			if s.toolRegistry.RequiresApproval(tc.Function.Name) {
+			toolName := tc.Function.Name
+			if s.toolRegistry.RequiresApproval(toolName) {
+				// 若用户在 Resume 时选择同意本轮同名工具免审批，自动跳过中断拦截！
+				if approvedTools[toolName] {
+					log.Debugw(ctx, "tool_approval_bypassed", append(baseFields, "tool_name", toolName, "reason", "approved_in_current_scope")...)
+					continue
+				}
+
 				interruptID := utils.NewUUID()
 				pendingInterrupts = append(pendingInterrupts, &dataBase.NocliInterruptModel{
-					InterruptID:   interruptID,
-					SessionID:     sessionID,
-					Status:        pb.InterruptStatus_INTERRUPT_STATUS_PENDING,
-					ToolCallID:    tc.ID,
-					ToolName:      tc.Function.Name,
-					Arguments:     tc.Function.Arguments,
-					CreatedAt:     time.Now().Unix(),
+					InterruptID: interruptID,
+					SessionID:   sessionID,
+					Status:      pb.InterruptStatus_IS_PENDING,
+					ToolCallID:  tc.ID,
+					ToolName:    toolName,
+					Arguments:   tc.Function.Arguments,
+					CreatedAt:   time.Now().Unix(),
 				})
 				pendingToolCalls = append(pendingToolCalls, &pb.PendingToolCall{
 					InterruptId: interruptID,
 					ToolCallId:  tc.ID,
-					ToolName:    tc.Function.Name,
+					ToolName:    toolName,
 					Arguments:   tc.Function.Arguments,
 				})
 			}
@@ -339,14 +355,14 @@ func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []
 			if err := s.allDb.Base.NocliInterruptRepo.CreateBatch(ctx, pendingInterrupts); err != nil {
 				return nil, fmt.Errorf("创建中断记录失败: %v", err)
 			}
-			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SESSION_STATUS_INTERRUPTED)
+			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_INTERRUPTED)
 
 			log.Debugw(ctx, "chat_loop_interrupted", append(baseFields, "pending_count", len(pendingInterrupts))...)
 
 			return &LoopResult{
 				Messages:         messages,
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
-				Status:           pb.SessionStatus_SESSION_STATUS_INTERRUPTED,
+				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: pendingToolCalls,
 			}, nil
 		}
@@ -371,83 +387,6 @@ func (s *ChatBiz) runChatLoop(ctx context.Context, sessionID string, messages []
 			messages = append(messages, toolMsg)
 		}
 	}
-}
-
-func (s *ChatBiz) loadHistory(ctx context.Context, sessionID string) ([]openai.ChatCompletionMessage, error) {
-	models, err := s.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	messages := make([]openai.ChatCompletionMessage, 0, len(models))
-	for _, m := range models {
-		var msg openai.ChatCompletionMessage
-		if err := json.Unmarshal([]byte(m.Msg), &msg); err != nil {
-			return nil, err
-		}
-		messages = append(messages, msg)
-	}
-
-	// 容错修复：确保历史消息中悬空的 tool_calls 一定有对应的 tool 响应，防止调用 OpenAI 报 400 错
-	messages = sanitizeUnclosedToolCalls(messages)
-
-	return messages, nil
-}
-
-func sanitizeUnclosedToolCalls(messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
-	if len(messages) == 0 {
-		return messages
-	}
-
-	respondedToolIDs := make(map[string]bool)
-	for _, msg := range messages {
-		if msg.Role == openai.ChatMessageRoleTool && msg.ToolCallID != "" {
-			respondedToolIDs[msg.ToolCallID] = true
-		}
-	}
-
-	sanitized := make([]openai.ChatCompletionMessage, 0, len(messages))
-	for _, msg := range messages {
-		sanitized = append(sanitized, msg)
-		if msg.Role == openai.ChatMessageRoleAssistant && len(msg.ToolCalls) > 0 {
-			for _, tc := range msg.ToolCalls {
-				if !respondedToolIDs[tc.ID] {
-					sanitized = append(sanitized, openai.ChatCompletionMessage{
-						Role:       openai.ChatMessageRoleTool,
-						Content:    "操作已取消：未获得用户明确授权响应",
-						ToolCallID: tc.ID,
-					})
-					respondedToolIDs[tc.ID] = true
-				}
-			}
-		}
-	}
-
-	return sanitized
-}
-
-func (s *ChatBiz) saveHistory(ctx context.Context, sessionID string, messages []openai.ChatCompletionMessage) error {
-	if len(messages) == 0 {
-		return nil
-	}
-
-	_ = s.allDb.Base.NocliSessionRepo.UpdateUpdatedAt(ctx, sessionID, time.Now().Unix())
-
-	now := time.Now().Unix()
-	models := make([]*dataBase.NocliMessageModel, 0, len(messages))
-	for _, msg := range messages {
-		str, err := msg.MarshalJSON()
-		if err != nil {
-			return err
-		}
-		models = append(models, &dataBase.NocliMessageModel{
-			SessionID: sessionID,
-			Msg:       string(str),
-			CreatedAt: now,
-		})
-	}
-
-	return s.allDb.Base.NocliMessageRepo.CreateBatch(ctx, models)
 }
 
 func truncateText(text string, maxLen int) string {

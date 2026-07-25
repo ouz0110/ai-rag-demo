@@ -27,26 +27,33 @@ service NocliChat {
 
 // 会话状态
 enum SessionStatus {
-  SESSION_STATUS_UNSPECIFIED = 0;
-  SESSION_STATUS_IDLE = 1;        // 空闲/已完成
-  SESSION_STATUS_RUNNING = 2;     // 处理中
-  SESSION_STATUS_INTERRUPTED = 3; // 已中断，等待人工决策
+  SS_UNSPECIFIED = 0;
+  SS_IDLE = 1;        // 空闲/已完成
+  SS_RUNNING = 2;     // 处理中
+  SS_INTERRUPTED = 3; // 已中断，等待人工决策
 }
 
 // 中断事件状态
 enum InterruptStatus {
-  INTERRUPT_STATUS_UNSPECIFIED = 0;
-  INTERRUPT_STATUS_PENDING = 1;  // 待审批
-  INTERRUPT_STATUS_APPROVED = 2; // 已批准
-  INTERRUPT_STATUS_REJECTED = 3; // 已拒绝
-  INTERRUPT_STATUS_EXPIRED = 4;  // 已超时/取消
+  IS_UNSPECIFIED = 0;
+  IS_PENDING = 1;  // 待审批
+  IS_APPROVED = 2; // 已批准
+  IS_REJECTED = 3; // 已拒绝
+  IS_EXPIRED = 4;  // 已超时/取消
 }
 
 // 恢复执行动作
 enum ResumeAction {
-  RESUME_ACTION_UNSPECIFIED = 0;
-  RESUME_ACTION_APPROVE = 1; // 批准执行
-  RESUME_ACTION_REJECT = 2;  // 拒绝执行
+  RA_UNSPECIFIED = 0;
+  RA_APPROVE = 1; // 批准执行
+  RA_REJECT = 2;  // 拒绝执行
+}
+
+// 授权范围
+enum ApproveScope {
+  AS_UNSPECIFIED = 0;
+  AS_SINGLE_CALL = 1;     // 仅同意本次调用
+  AS_SESSION_TOOL = 2;    // 同意本轮/本会话后续所有同名工具调用
 }
 
 // 待确认的工具调用信息
@@ -87,9 +94,11 @@ message ResumeRequest {
   string interrupt_id = 2 [(validate.rules).string.min_len = 1];
   // 恢复动作 (APPROVE/REJECT)
   ResumeAction action = 3;
-  // 拒绝理由或用户意见
-  string reason = 4;
+  // 授权范围 (SINGLE_CALL/SESSION_TOOL)
+  ApproveScope approve_scope = 4;
+  // 拒绝原因或用户意见
+  string reason = 5;
   // 模型名称
-  string model = 5;
+  string model = 6;
 }
 
