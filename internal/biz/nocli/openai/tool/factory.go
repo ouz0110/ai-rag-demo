@@ -32,6 +32,13 @@ func NewRegistry(cfg *conf.Config) *Registry {
 	}
 }
 
+func (r *Registry) Register(t Tool) {
+	if r.tools == nil {
+		r.tools = make(map[string]Tool)
+	}
+	r.tools[t.Definition().Function.Name] = t
+}
+
 func (r *Registry) BuildTools() []openai.Tool {
 	defs := make([]openai.Tool, 0, len(r.tools))
 	for _, t := range r.tools {

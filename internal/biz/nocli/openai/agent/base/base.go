@@ -13,11 +13,23 @@ import (
 
 // BaseAgent 通用 Agent 基础结构体，提供核心 ReAct 循环、Tool 执行与 Stream Fetcher 能力
 type BaseAgent struct {
+	name          string
 	cfg           *conf.Config
 	toolRegistry  *tool.Registry
 	maxIterations int
 	tools         []openai.Tool
 	model         string
+}
+
+func (b *BaseAgent) Name() string {
+	if b.name != "" {
+		return b.name
+	}
+	return "main"
+}
+
+func (b *BaseAgent) SetName(name string) {
+	b.name = name
 }
 
 func NewBaseAgent(cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
@@ -33,11 +45,6 @@ func NewBaseAgent(cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
 		defaultModel = "deepseek-v3.2"
 	}
 
-	// var tools []openai.Tool
-	// if toolRegistry != nil {
-	// 	tools = toolRegistry.BuildTools()
-	// }
-
 	return &BaseAgent{
 		cfg:           cfg,
 		toolRegistry:  toolRegistry,
@@ -52,13 +59,7 @@ func (b *BaseAgent) ToolRegistry() *tool.Registry {
 }
 
 func (b *BaseAgent) Tools() []openai.Tool {
-	if len(b.tools) > 0 {
-		return b.tools
-	}
-	if b.toolRegistry != nil {
-		return b.toolRegistry.BuildTools()
-	}
-	return nil
+	return b.tools
 }
 
 func (b *BaseAgent) SetTools(tools []openai.Tool) {

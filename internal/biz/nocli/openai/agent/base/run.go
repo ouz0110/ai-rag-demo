@@ -21,21 +21,22 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 	tools := b.Tools()
 	approvedTools := opts.ApprovedTools
 	rejectedTools := opts.RejectedTools
-	emitter := opts.Emitter
-	fetcher := opts.Fetcher
+	rawEmitter := opts.Emitter
+	if rawEmitter == nil {
+		rawEmitter = NoopStreamEmitter
+	}
 
-	if approvedTools == nil {
-		approvedTools = make(map[string]bool)
+	emitter := func(chunk *pb.StreamChunk) {
+		if chunk != nil && chunk.AgentName == "" {
+			chunk.AgentName = b.Name()
+		}
+		rawEmitter(chunk)
 	}
-	if rejectedTools == nil {
-		rejectedTools = make(map[string]string)
-	}
-	if emitter == nil {
-		emitter = NoopStreamEmitter
-	}
+	fetcher := opts.Fetcher
 
 	baseFields := []interface{}{
 		"session_id", sessionID,
+		"agent_name", b.Name(),
 		"model", model,
 	}
 
@@ -62,6 +63,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
 			})
 			return &LoopResult{
+				AgentName:        b.Name(),
 				Messages:         messages,
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
@@ -113,9 +115,10 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Status:    pb.SessionStatus_SS_IDLE,
 			})
 			return &LoopResult{
-				Messages: messages,
-				Reply:    msg.Content,
-				Status:   pb.SessionStatus_SS_IDLE,
+				AgentName:        b.Name(),
+				Messages:         messages,
+				Reply:            msg.Content,
+				Status:           pb.SessionStatus_SS_IDLE,
 			}, nil
 		}
 
@@ -137,6 +140,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 			})
 
 			return &LoopResult{
+				AgentName:        b.Name(),
 				Messages:         messages,
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
 				Status:           pb.SessionStatus_SS_INTERRUPTED,

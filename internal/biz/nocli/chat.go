@@ -50,6 +50,19 @@ func NewChatBiz(
 	agentReg := agent.NewRegistry(baseAgent)
 	skillMgr := skill.NewManager(skillReg)
 
+	// 🎯 注册专有子 Agent 工具给 MainAgent 自由调度 (Agent-as-a-Tool 模式)
+	defaultAgentOpts := agent.AgentToolOptions{
+		PassFullContextToSubAgent:  false, // 默认不透传父上下文给子
+		ReturnFullContextToParent: false, // 默认不返回子全部上下文给父
+		StreamSubAgentExecution:   true,  // 默认流式展示子 Agent 执行过程
+	}
+	if fileAgent, ok := agentReg.Get(agent.FileAnalyzerAgentName); ok {
+		toolReg.Register(agent.NewAgentTool(fileAgent, openaiChatModel, defaultAgentOpts))
+	}
+	if ragAgent, ok := agentReg.Get(agent.RAGAgentName); ok {
+		toolReg.Register(agent.NewAgentTool(ragAgent, openaiChatModel, defaultAgentOpts))
+	}
+
 	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg, skillMgr)
 
 	return &ChatBiz{
@@ -75,13 +88,15 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		return nil, err
 	}
 
-	ag, ok := s.agentRegistry.Get("main")
+	ag, ok := s.agentRegistry.Get(agent.MainAgentName)
 	if !ok {
 		return nil, fmt.Errorf("未找到默认 main agent")
 	}
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
+	ctx = context.WithValue(ctx, "parent_session_id", sessionID)
+	ctx = context.WithValue(ctx, "parent_messages", messages)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -149,13 +164,15 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		return nil, fmt.Errorf("加载对话历史失败: %v", err)
 	}
 
-	ag, ok := s.agentRegistry.Get("main")
+	ag, ok := s.agentRegistry.Get(agent.MainAgentName)
 	if !ok {
 		return nil, fmt.Errorf("未找到默认 main agent")
 	}
 
 	newMessageStart := len(messages)
 
+	ctx = context.WithValue(ctx, "parent_session_id", req.SessionId)
+	ctx = context.WithValue(ctx, "parent_messages", messages)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

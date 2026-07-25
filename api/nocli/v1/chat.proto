@@ -110,20 +110,22 @@ message StreamError {
 message StreamChunk {
   // 事件类型
   StreamEventType event = 1;
+  // 当前 Agent 名称 (例如: main, rag_agent, code_analyzer)
+  string agent_name = 2;
   // 会话ID
-  string session_id = 2;
+  string session_id = 3;
   // 会话当前状态
-  SessionStatus status = 3;
+  SessionStatus status = 4;
   // 文本回复增量或完整回答文本
-  string text = 4;
+  string text = 5;
   // 思考过程增量或完整思考文本
-  string reasoning_text = 5;
+  string reasoning_text = 6;
   // 自动工具执行信息 (event == SET_TOOL_START / SET_TOOL_RESULT)
-  StreamToolInfo tool_info = 6;
+  StreamToolInfo tool_info = 7;
   // 待确认的工具调用列表 (当 status 为 SS_INTERRUPTED 或 event 为 SET_INTERRUPT 时有效)
-  repeated PendingToolCall pending_tool_calls = 7;
+  repeated PendingToolCall pending_tool_calls = 8;
   // 错误信息 (event == SET_ERROR)
-  StreamError error = 8;
+  StreamError error = 9;
 }
 
 // 补全请求

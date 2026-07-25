@@ -6,31 +6,29 @@ import (
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	"ai-rag-demo/internal/pkg/skill"
-
-	"github.com/sashabaranov/go-openai"
 )
+
+const RAGAgentName = "rag_agent"
 
 type RAGAgent struct {
 	*base.BaseAgent
 }
 
-func NewRAGAgent(b *base.BaseAgent, model string) *RAGAgent {
-	b.SetModel(model)
+func NewRAGAgent(b *base.BaseAgent) *RAGAgent {
+	if b != nil {
+		b.SetName(RAGAgentName)
+	}
 	return &RAGAgent{
 		BaseAgent: b,
 	}
 }
 
 func (a *RAGAgent) Name() string {
-	return "rag_agent"
-}
-
-func (a *RAGAgent) Tools() []openai.Tool {
-	return []openai.Tool{}
+	return RAGAgentName
 }
 
 func (a *RAGAgent) Description() string {
-	return "专有 RAG 知识库问答 Agent，擅长基于文档检索与知识库上下文进行精准问答与总结"
+	return "专有 RAG 知识库与文档问答专家。擅长基于业务文档、产品规范及知识库材料进行归纳与总结。当用户询问知识库、文档或业务规范相关问题时，必须委派给此工具。"
 }
 
 func (a *RAGAgent) MaxIterations() int {

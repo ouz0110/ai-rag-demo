@@ -6,6 +6,7 @@ import (
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	"ai-rag-demo/internal/biz/nocli/openai/agent"
 	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 
 	dataBase "ai-rag-demo/internal/data/base"
@@ -28,15 +29,18 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		return err
 	}
 
-	ag, ok := s.agentRegistry.Get("main")
+	ag, ok := s.agentRegistry.Get(agent.MainAgentName)
 	if !ok {
 		return fmt.Errorf("未找到默认 main agent")
 	}
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
-	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "model", ag.Model())
+	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "agent_name", ag.Name(), "model", ag.Model())
 
+	ctx = context.WithValue(ctx, "parent_session_id", sessionID)
+	ctx = context.WithValue(ctx, "parent_messages", messages)
+	ctx = context.WithValue(ctx, "parent_emitter", emitter)
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     sessionID,
@@ -92,15 +96,18 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		return fmt.Errorf("加载对话历史失败: %v", err)
 	}
 
-	ag, ok := s.agentRegistry.Get("main")
+	ag, ok := s.agentRegistry.Get(agent.MainAgentName)
 	if !ok {
 		return fmt.Errorf("未找到默认 main agent")
 	}
 
 	newMessageStart := len(messages)
 
-	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "model", ag.Model())
+	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "agent_name", ag.Name(), "model", ag.Model())
 
+	ctx = context.WithValue(ctx, "parent_session_id", req.SessionId)
+	ctx = context.WithValue(ctx, "parent_messages", messages)
+	ctx = context.WithValue(ctx, "parent_emitter", emitter)
 	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

@@ -12,6 +12,7 @@ import (
 )
 
 type LoopResult struct {
+	AgentName        string
 	Messages         []openai.ChatCompletionMessage
 	Reply            string
 	Status           pb.SessionStatus
