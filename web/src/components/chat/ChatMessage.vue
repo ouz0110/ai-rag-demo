@@ -34,19 +34,19 @@
           :is-streaming="msg.isStreaming && !msg.content"
         />
 
-        <!-- 2. 助手专属: 自动工具调用组合卡片 -->
-        <ToolCallBox
-          v-if="msg.role === 'assistant' && msg.tools && msg.tools.length > 0"
-          :tools="msg.tools"
-        />
-
-        <!-- 3. 用户/助手文本输出 -->
+        <!-- 2. 用户/助手文本输出 -->
         <div
           v-if="msg.content"
           class="markdown-body"
           :class="{ 'cursor-blink': msg.isStreaming }"
           v-html="renderedContent"
         ></div>
+
+        <!-- 3. 助手专属: 自动工具调用组合卡片 (位于文本下方，逻辑更连贯) -->
+        <ToolCallBox
+          v-if="msg.role === 'assistant' && msg.tools && msg.tools.length > 0"
+          :tools="msg.tools"
+        />
 
         <!-- 4. 报错提醒 -->
         <div v-if="msg.error" class="error-box">

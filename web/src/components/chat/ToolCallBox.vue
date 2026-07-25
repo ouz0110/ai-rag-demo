@@ -112,7 +112,8 @@ function formatArgs(jsonStr: string) {
 
 <style scoped>
 .tools-group-box {
-  margin-bottom: 0.875rem;
+  margin-top: 0.75rem;
+  margin-bottom: 0.25rem;
   border-radius: 12px;
   background: rgba(10, 14, 26, 0.7);
   border: 1px solid rgba(255, 255, 255, 0.08);
