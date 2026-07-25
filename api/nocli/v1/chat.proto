@@ -8,18 +8,34 @@ import "validate/validate.proto";
 
 // Nocli AI补全服务
 service NocliChat {
-  // 发送消息
-  rpc Completion(CompletionRequest) returns (CompletionResponse) {
+  // 发送消息 (一问一答，返回 StreamChunk)
+  rpc Completion(CompletionRequest) returns (StreamChunk) {
     option (google.api.http) = {
       post: "/nocli/v1/completion"
       body: "*"
     };
   }
 
-  // 恢复中断并继续对话
-  rpc Resume(ResumeRequest) returns (CompletionResponse) {
+  // 恢复中断并继续对话 (一问一答，返回 StreamChunk)
+  rpc Resume(ResumeRequest) returns (StreamChunk) {
     option (google.api.http) = {
       post: "/nocli/v1/resume"
+      body: "*"
+    };
+  }
+
+  // 流式发送消息 (SSE/Stream)
+  rpc StreamCompletion(CompletionRequest) returns (stream StreamChunk) {
+    option (google.api.http) = {
+      post: "/nocli/v1/stream/completion"
+      body: "*"
+    };
+  }
+
+  // 流式恢复中断并继续对话 (SSE/Stream)
+  rpc StreamResume(ResumeRequest) returns (stream StreamChunk) {
+    option (google.api.http) = {
+      post: "/nocli/v1/stream/resume"
       body: "*"
     };
   }
@@ -52,8 +68,20 @@ enum ResumeAction {
 // 授权范围
 enum ApproveScope {
   AS_UNSPECIFIED = 0;
-  AS_SINGLE_CALL = 1;     // 仅同意本次调用
-  AS_SESSION_TOOL = 2;    // 同意本轮/本会话后续所有同名工具调用
+  AS_SINGLE_CALL = 1;  // 仅同意本次调用
+  AS_SESSION_TOOL = 2; // 同意本轮/本会话后续所有同名工具调用
+}
+
+// SSE 流式事件类型
+enum StreamEventType {
+  SET_UNSPECIFIED = 0;
+  SET_TEXT_DELTA = 1;  // 文本回复增量 (打字机)
+  SET_REASONING = 2;   // 思考/推理过程增量 (CoT)
+  SET_TOOL_START = 3;  // 自动工具开始执行
+  SET_TOOL_RESULT = 4; // 自动工具执行完成
+  SET_INTERRUPT = 5;   // 触发中断挂起 (人工授权)
+  SET_DONE = 6;        // 流传输正常完成
+  SET_ERROR = 7;       // 异常错误
 }
 
 // 待确认的工具调用信息
@@ -64,6 +92,40 @@ message PendingToolCall {
   string arguments = 4;
 }
 
+// 流式工具执行信息
+message StreamToolInfo {
+  string tool_call_id = 1;
+  string tool_name = 2;
+  string arguments = 3;
+  string result_preview = 4;
+}
+
+// 流式错误信息
+message StreamError {
+  int32 code = 1;
+  string message = 2;
+}
+
+// 统一数据 Chunk (对应 SSE data 部分与非流式返回的统一 JSON 结构)
+message StreamChunk {
+  // 事件类型
+  StreamEventType event = 1;
+  // 会话ID
+  string session_id = 2;
+  // 会话当前状态
+  SessionStatus status = 3;
+  // 文本回复增量或完整回答文本
+  string text = 4;
+  // 思考过程增量或完整思考文本
+  string reasoning_text = 5;
+  // 自动工具执行信息 (event == SET_TOOL_START / SET_TOOL_RESULT)
+  StreamToolInfo tool_info = 6;
+  // 待确认的工具调用列表 (当 status 为 SS_INTERRUPTED 或 event 为 SET_INTERRUPT 时有效)
+  repeated PendingToolCall pending_tool_calls = 7;
+  // 错误信息 (event == SET_ERROR)
+  StreamError error = 8;
+}
+
 // 补全请求
 message CompletionRequest {
   // 消息内容
@@ -72,18 +134,6 @@ message CompletionRequest {
   string session_id = 2;
   // 模型名称
   string model = 3;
-}
-
-// 补全响应
-message CompletionResponse {
-  // 回复内容
-  string reply = 1;
-  // 会话ID
-  string session_id = 2;
-  // 会话当前状态
-  SessionStatus status = 3;
-  // 待确认的工具调用列表 (当 status 为 SESSION_STATUS_INTERRUPTED 时有效)
-  repeated PendingToolCall pending_tool_calls = 4;
 }
 
 // 恢复执行请求
@@ -101,4 +151,3 @@ message ResumeRequest {
   // 模型名称
   string model = 6;
 }
-

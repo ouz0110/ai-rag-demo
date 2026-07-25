@@ -22,24 +22,44 @@ type ProcessToolCallsResult struct {
 	ExecutedMsgs     []openai.ChatCompletionMessage
 }
 
-// processToolCalls 严格顺序执行 ToolCalls，遇到第一个高危工具时立即暂停切出
+// processToolCalls 统一工具处理管道：使用 emitter 闭包（流式推送 SSE，非流式空操作），
+// 严格顺序执行工具、处理拒绝工具、自动调用 emitter 发送事件并拦截高危中断
 func (s *ChatBiz) processToolCalls(
 	ctx context.Context,
 	sessionID string,
 	baseFields []interface{},
 	toolCalls []openai.ToolCall,
 	approvedTools map[string]bool,
+	rejectedTools map[string]string,
 	totalToolCalls *int,
+	emitter StreamEmitter,
 ) (*ProcessToolCallsResult, error) {
+	if emitter == nil {
+		emitter = NoopStreamEmitter
+	}
+
 	result := &ProcessToolCallsResult{
 		ExecutedMsgs: make([]openai.ChatCompletionMessage, 0, len(toolCalls)),
 	}
 
 	for _, tc := range toolCalls {
 		toolName := tc.Function.Name
+		toolID := tc.ID
 
-		// 检查是否需要审批且未在授权豁免名单中
-		if s.toolRegistry.RequiresApproval(toolName) && !approvedTools[toolName] {
+		// 1. 若在 Resume 阶段被拒绝
+		if reason, isRejected := rejectedTools[toolID]; isRejected {
+			toolMsg := openai.ChatCompletionMessage{
+				Role:       openai.ChatMessageRoleTool,
+				Content:    fmt.Sprintf("操作被用户拒绝: %s", reason),
+				ToolCallID: toolID,
+			}
+			result.ExecutedMsgs = append(result.ExecutedMsgs, toolMsg)
+			log.Debugw(ctx, "tool_execution_rejected", append(baseFields, "tool_id", toolID, "tool_name", toolName, "reason", reason)...)
+			continue
+		}
+
+		// 2. 检查是否需要审批且未在授权放行名单中
+		if s.toolRegistry.RequiresApproval(toolName) && !approvedTools[toolName] && !approvedTools[toolID] {
 			// 🎯 严格顺序控制：一旦遇到第一个需要审批的高危工具，立即中断生成挂起事项并切出！
 			interruptID := utils.NewUUID()
 			result.HasInterrupt = true
@@ -47,38 +67,62 @@ func (s *ChatBiz) processToolCalls(
 				InterruptID: interruptID,
 				SessionID:   sessionID,
 				Status:      pb.InterruptStatus_IS_PENDING,
-				ToolCallID:  tc.ID,
+				ToolCallID:  toolID,
 				ToolName:    toolName,
 				Arguments:   tc.Function.Arguments,
 				CreatedAt:   time.Now().Unix(),
 			}
 			result.PendingToolCall = &pb.PendingToolCall{
 				InterruptId: interruptID,
-				ToolCallId:  tc.ID,
+				ToolCallId:  toolID,
 				ToolName:    toolName,
 				Arguments:   tc.Function.Arguments,
 			}
 
-			log.Debugw(ctx, "tool_approval_interrupted", append(baseFields, "tool_name", toolName, "tool_id", tc.ID)...)
+			log.Debugw(ctx, "tool_approval_interrupted", append(baseFields, "tool_name", toolName, "tool_id", toolID)...)
 			break // 停止遍历后续任何 ToolCall
 		}
 
-		// 安全工具（或已授权豁免工具）：按顺序立即执行
+		// 3. 安全工具或已授权放行工具：按顺序立即执行
 		*totalToolCalls++
-		log.Debugw(ctx, "tool_call", append(baseFields, "tool_index", *totalToolCalls, "tool_id", tc.ID, "tool_name", toolName, "args_len", len(tc.Function.Arguments))...)
+		log.Debugw(ctx, "tool_call", append(baseFields, "tool_index", *totalToolCalls, "tool_id", toolID, "tool_name", toolName, "args_len", len(tc.Function.Arguments))...)
+
+		// 通过 emitter 闭包发送 SET_TOOL_START 事件
+		emitter(&pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_TOOL_START,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_RUNNING,
+			ToolInfo: &pb.StreamToolInfo{
+				ToolCallId: toolID,
+				ToolName:   toolName,
+				Arguments:  tc.Function.Arguments,
+			},
+		})
 
 		toolResult, err := s.toolRegistry.Call(ctx, toolName, tc.Function.Arguments)
 		if err != nil {
 			toolResult = fmt.Sprintf("工具执行失败: %v", err)
-			log.Debugw(ctx, "tool_result_error", append(baseFields, "tool_id", tc.ID, "tool_name", toolName, "error", err)...)
+			log.Debugw(ctx, "tool_result_error", append(baseFields, "tool_id", toolID, "tool_name", toolName, "error", err)...)
 		} else {
-			log.Debugw(ctx, "tool_result_success", append(baseFields, "tool_id", tc.ID, "tool_name", toolName, "result_len", len(toolResult))...)
+			log.Debugw(ctx, "tool_result_success", append(baseFields, "tool_id", toolID, "tool_name", toolName, "result_len", len(toolResult))...)
 		}
+
+		// 通过 emitter 闭包发送 SET_TOOL_RESULT 事件
+		emitter(&pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_TOOL_RESULT,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_RUNNING,
+			ToolInfo: &pb.StreamToolInfo{
+				ToolCallId:    toolID,
+				ToolName:      toolName,
+				ResultPreview: truncateText(toolResult, 200),
+			},
+		})
 
 		toolMsg := openai.ChatCompletionMessage{
 			Role:       openai.ChatMessageRoleTool,
 			Content:    toolResult,
-			ToolCallID: tc.ID,
+			ToolCallID: toolID,
 		}
 		result.ExecutedMsgs = append(result.ExecutedMsgs, toolMsg)
 	}
@@ -95,6 +139,54 @@ func (s *ChatBiz) processToolCalls(
 	}
 
 	return result, nil
+}
+
+// executeResumeTool 执行 Resume 中的中断决策，更新中断表状态，并返回生成的 Tool 消息（不操作消息持久化）
+func (s *ChatBiz) executeResumeTool(
+	ctx context.Context,
+	userOpenid string,
+	interrupt *dataBase.NocliInterruptModel,
+	action pb.ResumeAction,
+	reason string,
+) (openai.ChatCompletionMessage, error) {
+	now := time.Now().Unix()
+	var toolResult string
+
+	if action == pb.ResumeAction_RA_APPROVE {
+		result, err := s.toolRegistry.Call(ctx, interrupt.ToolName, interrupt.Arguments)
+		if err != nil {
+			toolResult = fmt.Sprintf("工具执行失败: %v", err)
+		} else {
+			toolResult = result
+		}
+		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(
+			ctx,
+			interrupt.InterruptID,
+			pb.InterruptStatus_IS_APPROVED,
+			now,
+			userOpenid,
+			reason,
+		)
+	} else {
+		if reason == "" {
+			reason = "用户拒绝执行该操作"
+		}
+		toolResult = fmt.Sprintf("操作被用户拒绝: %s", reason)
+		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(
+			ctx,
+			interrupt.InterruptID,
+			pb.InterruptStatus_IS_REJECTED,
+			now,
+			userOpenid,
+			reason,
+		)
+	}
+
+	return openai.ChatCompletionMessage{
+		Role:       openai.ChatMessageRoleTool,
+		Content:    toolResult,
+		ToolCallID: interrupt.ToolCallID,
+	}, nil
 }
 
 // cancelPendingInterruptsOnNewCompletion 当用户发送新问题时，自动作废旧的待处理中断，并返回产生的取消消息

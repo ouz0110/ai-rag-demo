@@ -55,10 +55,20 @@ func NewHTTPServer(
 	rootRouter.GET("/live", func(ctx transHttp.Context) error { return ctx.Result(http.StatusOK, nil) })
 	rootRouter.GET("/ready", func(ctx transHttp.Context) error { return ctx.Result(http.StatusOK, nil) })
 
+	// 🎯 显式注册 HTTP SSE 流式推导与恢复接口
+	rootRouter.POST("/nocli/v1/stream/completion", func(ctx transHttp.Context) error {
+		chatSrv.StreamCompletionHTTP(ctx.Response(), ctx.Request())
+		return nil
+	})
+	rootRouter.POST("/nocli/v1/stream/resume", func(ctx transHttp.Context) error {
+		chatSrv.StreamResumeHTTP(ctx.Response(), ctx.Request())
+		return nil
+	})
+
 	// 注册账号服务
 	basepb.RegisterAccountsHTTPServer(server, accountSrv)
 
-	// 注册AI对话服务
+	// 注册AI对话服务 (常规 Unary 接口)
 	noclipb.RegisterNocliChatHTTPServer(server, chatSrv)
 
 	return server

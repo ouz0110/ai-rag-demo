@@ -2,9 +2,12 @@ package nocli
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli"
+	"ai-rag-demo/internal/pkg/sse"
 )
 
 type ChatService struct {
@@ -20,10 +23,66 @@ func NewChatService(
 	}
 }
 
-func (s *ChatService) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.CompletionResponse, error) {
+// Completion 非流式一问一答 RPC
+func (s *ChatService) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.StreamChunk, error) {
 	return s.chatBiz.Completion(ctx, req)
 }
 
-func (s *ChatService) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.CompletionResponse, error) {
+// Resume 非流式恢复执行 RPC
+func (s *ChatService) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.StreamChunk, error) {
 	return s.chatBiz.Resume(ctx, req)
+}
+
+// StreamCompletion 原生 gRPC 流式服务端接口
+func (s *ChatService) StreamCompletion(req *pb.CompletionRequest, stream pb.NocliChat_StreamCompletionServer) error {
+	ctx := stream.Context()
+	emitter := func(chunk *pb.StreamChunk) {
+		_ = stream.Send(chunk)
+	}
+
+	return s.chatBiz.StreamCompletion(ctx, req, emitter)
+}
+
+// StreamResume 原生 gRPC 流式恢复服务端接口
+func (s *ChatService) StreamResume(req *pb.ResumeRequest, stream pb.NocliChat_StreamResumeServer) error {
+	ctx := stream.Context()
+	emitter := func(chunk *pb.StreamChunk) {
+		_ = stream.Send(chunk)
+	}
+
+	return s.chatBiz.StreamResume(ctx, req, emitter)
+}
+
+// StreamCompletionHTTP 专门提供给 HTTP/REST 框架 (如 Kratos/Gin/net.http) 的 SSE 响应接口
+func (s *ChatService) StreamCompletionHTTP(w http.ResponseWriter, r *http.Request) {
+	emitter, err := sse.NewStreamEmitter(w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var req pb.CompletionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	_ = s.chatBiz.StreamCompletion(r.Context(), &req, emitter)
+}
+
+// StreamResumeHTTP 专门提供给 HTTP/REST 框架 (如 Kratos/Gin/net.http) 的 SSE 恢复响应接口
+func (s *ChatService) StreamResumeHTTP(w http.ResponseWriter, r *http.Request) {
+	emitter, err := sse.NewStreamEmitter(w)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var req pb.ResumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	_ = s.chatBiz.StreamResume(r.Context(), &req, emitter)
 }
