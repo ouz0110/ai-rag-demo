@@ -2,6 +2,7 @@ package agent
 
 import (
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
+	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	"sync"
 )
 
@@ -14,8 +15,9 @@ func NewRegistry(baseAgent *base.BaseAgent) *Registry {
 	r := &Registry{
 		agents: make(map[string]base.IAgent),
 	}
-	r.Register(NewMainAgent(baseAgent))
-	r.Register(NewCodeAnalyzerAgent(baseAgent))
+	r.Register(NewMainAgent(baseAgent, chatmodel.DeepseekV32))
+	r.Register(NewCodeAnalyzerAgent(baseAgent, chatmodel.DeepseekV32))
+	r.Register(NewRAGAgent(baseAgent, chatmodel.DeepseekV32))
 	return r
 }
 

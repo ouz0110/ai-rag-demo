@@ -33,19 +33,14 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		return fmt.Errorf("未找到默认 main agent")
 	}
 
-	tools := s.toolRegistry.BuildTools()
-	model := req.Model
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
-	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "model", model)
+	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "model", ag.Model())
 
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
-		AgentName:     ag.Name(),
 		SessionID:     sessionID,
 		Messages:      messages,
-		Tools:         tools,
-		Model:         model,
 		ApprovedTools: approvedTools,
 		Emitter:       emitter,
 		Fetcher:       fetcher,
@@ -103,18 +98,13 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 	}
 
 	newMessageStart := len(messages)
-	tools := s.toolRegistry.BuildTools()
-	model := req.Model
 
-	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "model", model)
+	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "model", ag.Model())
 
 	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
-		AgentName:     ag.Name(),
 		SessionID:     req.SessionId,
 		Messages:      messages,
-		Tools:         tools,
-		Model:         model,
 		ApprovedTools: approvedTools,
 		RejectedTools: rejectedTools,
 		Emitter:       emitter,

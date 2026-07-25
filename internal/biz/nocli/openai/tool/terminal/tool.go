@@ -1,7 +1,6 @@
 package terminal
 
 import (
-	"ai-rag-demo/internal/conf"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -11,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"ai-rag-demo/internal/conf"
 
 	openai "github.com/sashabaranov/go-openai"
 )

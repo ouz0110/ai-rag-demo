@@ -7,6 +7,8 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+const DeepseekV32 = "deepseek-v3.2"
+
 type ChatModel struct {
 	client *openai.Client
 	cfg    *conf.Config

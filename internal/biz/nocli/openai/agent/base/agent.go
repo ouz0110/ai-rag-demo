@@ -35,11 +35,8 @@ type StreamEmitter func(chunk *pb.StreamChunk)
 var NoopStreamEmitter StreamEmitter = func(chunk *pb.StreamChunk) {}
 
 type RunOptions struct {
-	AgentName     string
 	SessionID     string
 	Messages      []openai.ChatCompletionMessage
-	Tools         []openai.Tool
-	Model         string
 	ApprovedTools map[string]bool
 	RejectedTools map[string]string
 	Emitter       StreamEmitter
@@ -51,6 +48,8 @@ type IAgent interface {
 	Description() string
 	SystemPrompt(workDir string, skillMgr *skill.Manager) string
 	MaxIterations() int
+	Model() string
+	Tools() []openai.Tool
 	Run(ctx context.Context, opts *RunOptions) (*LoopResult, error)
 	GetStreamFetcher(sessionID string, chatModel *chatmodel.ChatModel, emitter StreamEmitter) MessageFetcher
 	GetSyncFetcher(chatModel *chatmodel.ChatModel) MessageFetcher

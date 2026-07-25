@@ -6,13 +6,16 @@ import (
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	"ai-rag-demo/internal/pkg/skill"
+
+	"github.com/sashabaranov/go-openai"
 )
 
 type MainAgent struct {
 	*base.BaseAgent
 }
 
-func NewMainAgent(base *base.BaseAgent) *MainAgent {
+func NewMainAgent(base *base.BaseAgent, model string) *MainAgent {
+	base.SetModel(model)
 	return &MainAgent{
 		BaseAgent: base,
 	}
@@ -20,6 +23,10 @@ func NewMainAgent(base *base.BaseAgent) *MainAgent {
 
 func (a *MainAgent) Name() string {
 	return "main"
+}
+
+func (a *MainAgent) Tools() []openai.Tool {
+	return a.ToolRegistry().BuildTools()
 }
 
 func (a *MainAgent) Description() string {

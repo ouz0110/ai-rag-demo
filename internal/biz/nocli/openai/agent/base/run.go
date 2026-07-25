@@ -17,16 +17,13 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 
 	sessionID := opts.SessionID
 	messages := opts.Messages
-	tools := opts.Tools
-	model := opts.Model
+	model := b.Model()
+	tools := b.Tools()
 	approvedTools := opts.ApprovedTools
 	rejectedTools := opts.RejectedTools
 	emitter := opts.Emitter
 	fetcher := opts.Fetcher
 
-	if model == "" {
-		model = b.ResolveModel(model)
-	}
 	if approvedTools == nil {
 		approvedTools = make(map[string]bool)
 	}
@@ -73,7 +70,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 		}
 	}
 
-	maxIterations := b.GetMaxIterationsForAgent(opts.AgentName, 15)
+	maxIterations := b.MaxIterations()
 
 	for {
 		iteration++

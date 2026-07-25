@@ -16,6 +16,8 @@ type BaseAgent struct {
 	cfg           *conf.Config
 	toolRegistry  *tool.Registry
 	maxIterations int
+	tools         []openai.Tool
+	model         string
 }
 
 func NewBaseAgent(cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
@@ -24,15 +26,64 @@ func NewBaseAgent(cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
 		maxIter = cfg.Source.Nocli.MaxAgentIterations
 	}
 
+	var defaultModel string
+	if cfg != nil && cfg.Source.OpenAI != nil && cfg.Source.OpenAI.Model != "" {
+		defaultModel = cfg.Source.OpenAI.Model
+	} else {
+		defaultModel = "deepseek-v3.2"
+	}
+
+	// var tools []openai.Tool
+	// if toolRegistry != nil {
+	// 	tools = toolRegistry.BuildTools()
+	// }
+
 	return &BaseAgent{
 		cfg:           cfg,
 		toolRegistry:  toolRegistry,
 		maxIterations: maxIter,
+		tools:         nil,
+		model:         defaultModel,
 	}
 }
 
 func (b *BaseAgent) ToolRegistry() *tool.Registry {
 	return b.toolRegistry
+}
+
+func (b *BaseAgent) Tools() []openai.Tool {
+	if len(b.tools) > 0 {
+		return b.tools
+	}
+	if b.toolRegistry != nil {
+		return b.toolRegistry.BuildTools()
+	}
+	return nil
+}
+
+func (b *BaseAgent) SetTools(tools []openai.Tool) {
+	b.tools = tools
+}
+
+func (b *BaseAgent) Model() string {
+	return b.model
+}
+
+func (b *BaseAgent) SetModel(model string) {
+	b.model = model
+}
+
+func (b *BaseAgent) ResolveModel(model string) string {
+	if model != "" {
+		return model
+	}
+	if b.model != "" {
+		return b.model
+	}
+	if b.cfg != nil && b.cfg.Source.OpenAI != nil && b.cfg.Source.OpenAI.Model != "" {
+		return b.cfg.Source.OpenAI.Model
+	}
+	return "deepseek-v3.2"
 }
 
 func (b *BaseAgent) GetMaxIterationsForAgent(agentName string, defaultMax int) int {
@@ -100,16 +151,6 @@ func (b *BaseAgent) handleMaxIterationsReached(
 		Reply:    finalMsg.Content,
 		Status:   pb.SessionStatus_SS_IDLE,
 	}, nil
-}
-
-func (b *BaseAgent) ResolveModel(model string) string {
-	if model != "" {
-		return model
-	}
-	if b.cfg != nil && b.cfg.Source.OpenAI != nil && b.cfg.Source.OpenAI.Model != "" {
-		return b.cfg.Source.OpenAI.Model
-	}
-	return "deepseek-v3.2"
 }
 
 func SanitizeMessages(messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {

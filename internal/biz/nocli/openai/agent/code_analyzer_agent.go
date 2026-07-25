@@ -6,13 +6,16 @@ import (
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	"ai-rag-demo/internal/pkg/skill"
+
+	"github.com/sashabaranov/go-openai"
 )
 
 type CodeAnalyzerAgent struct {
 	*base.BaseAgent
 }
 
-func NewCodeAnalyzerAgent(base *base.BaseAgent) *CodeAnalyzerAgent {
+func NewCodeAnalyzerAgent(base *base.BaseAgent, model string) *CodeAnalyzerAgent {
+	base.SetModel(model)
 	return &CodeAnalyzerAgent{
 		BaseAgent: base,
 	}
@@ -24,6 +27,10 @@ func (a *CodeAnalyzerAgent) Name() string {
 
 func (a *CodeAnalyzerAgent) Description() string {
 	return "专有代码分析 Agent，擅长架构分析、Symbol 级代码搜索与静态分析"
+}
+
+func (a *CodeAnalyzerAgent) Tools() []openai.Tool {
+	return a.ToolRegistry().BuildTools()
 }
 
 func (a *CodeAnalyzerAgent) MaxIterations() int {

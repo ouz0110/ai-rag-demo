@@ -80,18 +80,13 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		return nil, fmt.Errorf("未找到默认 main agent")
 	}
 
-	tools := s.toolRegistry.BuildTools()
-	model := req.Model
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
-		AgentName:     ag.Name(),
 		SessionID:     sessionID,
 		Messages:      messages,
-		Tools:         tools,
-		Model:         model,
 		ApprovedTools: approvedTools,
 		Fetcher:       fetcher,
 	})
@@ -160,16 +155,11 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 	}
 
 	newMessageStart := len(messages)
-	tools := s.toolRegistry.BuildTools()
-	model := req.Model
 
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
-		AgentName:     ag.Name(),
 		SessionID:     req.SessionId,
 		Messages:      messages,
-		Tools:         tools,
-		Model:         model,
 		ApprovedTools: approvedTools,
 		RejectedTools: rejectedTools,
 		Fetcher:       fetcher,
