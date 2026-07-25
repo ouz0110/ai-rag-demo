@@ -55,15 +55,9 @@ func NewHTTPServer(
 	rootRouter.GET("/live", func(ctx transHttp.Context) error { return ctx.Result(http.StatusOK, nil) })
 	rootRouter.GET("/ready", func(ctx transHttp.Context) error { return ctx.Result(http.StatusOK, nil) })
 
-	// 🎯 显式注册 HTTP SSE 流式推导与恢复接口
-	rootRouter.POST("/nocli/v1/stream/completion", func(ctx transHttp.Context) error {
-		chatSrv.StreamCompletionHTTP(ctx.Response(), ctx.Request())
-		return nil
-	})
-	rootRouter.POST("/nocli/v1/stream/resume", func(ctx transHttp.Context) error {
-		chatSrv.StreamResumeHTTP(ctx.Response(), ctx.Request())
-		return nil
-	})
+	// 🎯 显式注册 HTTP SSE 流式推导与恢复接口 (经过中间件链处理，确保包含鉴权 UserFromContext、日志与 Trace)
+	rootRouter.POST("/nocli/v1/stream/completion", wrapStreamHandler(cfg, cache, chatSrv.StreamCompletionHTTP))
+	rootRouter.POST("/nocli/v1/stream/resume", wrapStreamHandler(cfg, cache, chatSrv.StreamResumeHTTP))
 
 	// 注册账号服务
 	basepb.RegisterAccountsHTTPServer(server, accountSrv)
@@ -88,6 +82,7 @@ func wrapHTTPOptions(cfg *conf.Config, cache *cache.Cache) []transHttp.ServerOpt
 			middleware.Tracing(cfg),
 			validate.Validator(),
 			middleware.I18N(),
+			middleware.HTTPAuth(cfg, cache),
 		),
 		transHttp.Filter(
 			handlers.CORS(

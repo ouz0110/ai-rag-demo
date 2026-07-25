@@ -225,5 +225,5 @@ func (s *ChatBiz) GetSessionHistory(ctx context.Context, req *pb.GetSessionHisto
 	if req == nil || req.SessionId == "" {
 		return nil, fmt.Errorf("session_id 不能为空")
 	}
-	return s.sessionMgr.GetSessionHistory(ctx, req.SessionId)
+	return s.sessionMgr.GetSessionHistory(ctx, req)
 }

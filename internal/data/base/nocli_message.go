@@ -45,10 +45,38 @@ type NocliMessageRepo struct {
 
 func (s *NocliMessageRepo) GetBySessionID(ctx context.Context, sessionID string) ([]NocliMessageModel, error) {
 	var list []NocliMessageModel
-	if err := s.GormDB(ctx).Where("session_id=?", sessionID).Order("id ASC").Find(&list).Error; err != nil {
+	if err := s.GormDB(ctx).Model(&NocliMessageModel{}).Where("session_id=?", sessionID).Order("id ASC").Find(&list).Error; err != nil {
 		return nil, err
 	}
 	return list, nil
+}
+
+func (s *NocliMessageRepo) ListBySessionIDPage(ctx context.Context, sessionID string, page, pageSize int32) ([]NocliMessageModel, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := int((page - 1) * pageSize)
+
+	var total int64
+	db := s.GormDB(ctx).Model(&NocliMessageModel{}).Where("session_id=?", sessionID)
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var list []NocliMessageModel
+	if err := db.Order("id DESC").Offset(offset).Limit(int(pageSize)).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+
+	// 翻转切片还原按时间/ID正序 (使单页内的消息保持时间先后顺序)
+	for i, j := 0, len(list)-1; i < j; i, j = i+1, j-1 {
+		list[i], list[j] = list[j], list[i]
+	}
+
+	return list, total, nil
 }
 
 func (s *NocliMessageRepo) GetRecentBySessionID(ctx context.Context, sessionID string, limit int) ([]NocliMessageModel, error) {

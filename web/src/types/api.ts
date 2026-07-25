@@ -159,15 +159,22 @@ export interface SessionInfo {
   updated_at: number;
 }
 
+export interface Pagination {
+  size?: number;
+  number?: number;
+  total?: number;
+  sort?: string[];
+}
+
 // 会话列表请求与响应
 export interface ListSessionsRequest {
-  page?: number;
-  page_size?: number;
+  page?: Pagination;
 }
 
 export interface ListSessionsResponse {
   sessions: SessionInfo[];
-  total: number;
+  total?: number;
+  page?: Pagination;
 }
 
 // 删除会话
@@ -183,6 +190,7 @@ export interface DeleteSessionResponse {
 // 获取会话历史
 export interface GetSessionHistoryRequest {
   session_id: string;
+  page?: Pagination;
 }
 
 export interface GetSessionHistoryResponse {
@@ -190,4 +198,6 @@ export interface GetSessionHistoryResponse {
   status: SessionStatus;
   chunks: StreamChunk[];
   pending_tool_calls?: PendingToolCall[];
+  total?: number;
+  has_more?: boolean;
 }

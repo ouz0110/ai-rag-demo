@@ -180,10 +180,18 @@ func (m *SessionManager) ListSessions(ctx context.Context, req *pb.ListSessionsR
 		openid = "default_user"
 	}
 
-	page := req.GetPage()
-	pageSize := req.GetPageSize()
+	var pageNum int32 = 1
+	var pageSize int32 = 20
+	if req != nil && req.Page != nil {
+		if req.Page.Number > 0 {
+			pageNum = int32(req.Page.Number)
+		}
+		if req.Page.Size > 0 {
+			pageSize = int32(req.Page.Size)
+		}
+	}
 
-	models, total, err := m.allDb.Base.NocliSessionRepo.ListByOpenid(ctx, openid, page, pageSize)
+	models, total, err := m.allDb.Base.NocliSessionRepo.ListByOpenid(ctx, openid, pageNum, pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("查询会话列表失败: %v", err)
 	}
@@ -281,9 +289,20 @@ func MapMessageModelToStreamChunk(sessionID string, model dataBase.NocliMessageM
 }
 
 // GetSessionHistory 获取指定会话的历史记录与挂起的中断信息 (方案 A: 返回用于前端统一渲染与回放的 StreamChunk 切片)
-func (m *SessionManager) GetSessionHistory(ctx context.Context, sessionID string) (*pb.GetSessionHistoryResponse, error) {
-	if sessionID == "" {
+func (m *SessionManager) GetSessionHistory(ctx context.Context, req *pb.GetSessionHistoryRequest) (*pb.GetSessionHistoryResponse, error) {
+	if req == nil || req.SessionId == "" {
 		return nil, fmt.Errorf("session_id 不能为空")
+	}
+	sessionID := req.SessionId
+	var pageNum int32 = 1
+	var pageSize int32 = 20
+	if req.Page != nil {
+		if req.Page.Number > 0 {
+			pageNum = int32(req.Page.Number)
+		}
+		if req.Page.Size > 0 {
+			pageSize = int32(req.Page.Size)
+		}
 	}
 
 	// 1. 查询会话状态
@@ -295,8 +314,8 @@ func (m *SessionManager) GetSessionHistory(ctx context.Context, sessionID string
 		return nil, fmt.Errorf("会话 %s 不存在", sessionID)
 	}
 
-	// 2. 加载会话消息历史并映射为 StreamChunk 回放包
-	msgModels, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
+	// 2. 分页加载会话消息历史并映射为 StreamChunk 回放包
+	msgModels, total, err := m.allDb.Base.NocliMessageRepo.ListBySessionIDPage(ctx, sessionID, pageNum, pageSize)
 	if err != nil {
 		return nil, fmt.Errorf("获取会话消息历史失败: %v", err)
 	}
@@ -307,6 +326,8 @@ func (m *SessionManager) GetSessionHistory(ctx context.Context, sessionID string
 			chunks = append(chunks, chunk)
 		}
 	}
+
+	hasMore := int64((pageNum-1)*pageSize+int32(len(msgModels))) < total
 
 	// 3. 如果会话处于 SS_INTERRUPTED，加载待审批的中断调用
 	var pendingCalls []*pb.PendingToolCall
@@ -329,5 +350,7 @@ func (m *SessionManager) GetSessionHistory(ctx context.Context, sessionID string
 		Status:           sessionModel.Status,
 		Chunks:           chunks,
 		PendingToolCalls: pendingCalls,
+		Total:            int32(total),
+		HasMore:          hasMore,
 	}, nil
 }

@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
+import { router } from '../router';
 import { chatApi } from '../api/chat';
 import { fetchSSE } from '../sse/sseClient';
 import {
@@ -58,8 +59,17 @@ export const useChatStore = defineStore('chat', () => {
   async function fetchSessions() {
     isSessionsLoading.value = true;
     try {
-      const res = await chatApi.listSessions({ page: 1, page_size: 50 });
-      sessions.value = res.sessions || [];
+      const res: any = await chatApi.listSessions({ page: { number: 1, size: 50 } });
+      const rawList = res?.sessions || res?.Sessions || [];
+      sessions.value = rawList
+        .map((s: any) => ({
+          session_id: s.session_id || s.sessionId || s.SessionID || s.SessionId || '',
+          name: s.name || s.Name || '新会话',
+          status: typeof s.status !== 'undefined' ? s.status : SessionStatus.SS_IDLE,
+          created_at: s.created_at || s.createdAt || 0,
+          updated_at: s.updated_at || s.updatedAt || 0,
+        }))
+        .filter((s: SessionInfo) => s.session_id && s.session_id !== 'undefined');
     } catch (err) {
       console.error('Failed to fetch sessions:', err);
     } finally {
@@ -67,24 +77,49 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 历史记录分页懒加载状态
+  const hasMoreHistory = ref<boolean>(false);
+  const historyPage = ref<number>(1);
+  const isLoadingMoreHistory = ref<boolean>(false);
+
   // 2. 选择/切换会话并加载历史
   async function selectSession(sessionId: string) {
-    if (currentSessionId.value === sessionId && messages.value.length > 0) return;
+    if (!sessionId || sessionId === 'undefined' || !sessionId.trim()) {
+      return;
+    }
+    if (currentSessionId.value === sessionId && (isGenerating.value || messages.value.length > 0)) {
+      return;
+    }
     
     currentSessionId.value = sessionId;
     messages.value = [];
     pendingToolCalls.value = [];
     sessionStatus.value = SessionStatus.SS_IDLE;
     isHistoryLoading.value = true;
+    historyPage.value = 1;
+    hasMoreHistory.value = false;
 
     try {
-      const res = await chatApi.getSessionHistory({ session_id: sessionId });
-      sessionStatus.value = res.status || SessionStatus.SS_IDLE;
-      pendingToolCalls.value = res.pending_tool_calls || [];
+      const res: any = await chatApi.getSessionHistory({
+        session_id: sessionId,
+        page: { number: 1, size: 20 },
+      });
+      sessionStatus.value = typeof res?.status !== 'undefined' ? res.status : SessionStatus.SS_IDLE;
+
+      hasMoreHistory.value = !!(res?.has_more ?? res?.hasMore);
+
+      const rawPending = res?.pending_tool_calls || res?.pendingToolCalls || [];
+      pendingToolCalls.value = rawPending.map((p: any) => ({
+        interrupt_id: p.interrupt_id || p.interruptId || '',
+        tool_call_id: p.tool_call_id || p.toolCallId || '',
+        tool_name: p.tool_name || p.toolName || '',
+        arguments: p.arguments || '',
+      }));
 
       // 回放/解析后端返回的 chunks 重构历史 UI
-      if (res.chunks && res.chunks.length > 0) {
-        messages.value = reconstructMessagesFromChunks(res.chunks);
+      const chunks = res?.chunks || res?.Chunks || [];
+      if (chunks && chunks.length > 0) {
+        messages.value = reconstructMessagesFromChunks(chunks);
       }
     } catch (err) {
       console.error('Failed to load session history:', err);
@@ -93,8 +128,39 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 加载更早的倒序历史消息 (向上滚动懒加载)
+  async function loadMoreHistory() {
+    if (!currentSessionId.value || !hasMoreHistory.value || isLoadingMoreHistory.value || isGenerating.value) {
+      return;
+    }
+
+    isLoadingMoreHistory.value = true;
+    const nextPage = historyPage.value + 1;
+
+    try {
+      const res: any = await chatApi.getSessionHistory({
+        session_id: currentSessionId.value,
+        page: { number: nextPage, size: 20 },
+      });
+
+      historyPage.value = nextPage;
+      hasMoreHistory.value = !!(res?.has_more ?? res?.hasMore);
+
+      const chunks = res?.chunks || res?.Chunks || [];
+      if (chunks && chunks.length > 0) {
+        const olderMessages = reconstructMessagesFromChunks(chunks);
+        // 将较旧的历史消息拼接到当前消息的最顶部
+        messages.value = [...olderMessages, ...messages.value];
+      }
+    } catch (err) {
+      console.error('Failed to load older session history:', err);
+    } finally {
+      isLoadingMoreHistory.value = false;
+    }
+  }
+
   // 从 chunks 重构前端消息结构
-  function reconstructMessagesFromChunks(chunks: StreamChunk[]): UIChatMessage[] {
+  function reconstructMessagesFromChunks(chunks: any[]): UIChatMessage[] {
     const list: UIChatMessage[] = [];
     let currentAssistantMsg: UIChatMessage | null = null;
 
@@ -106,7 +172,7 @@ export const useChatStore = defineStore('chat', () => {
         list.push({
           id: 'user-' + Date.now() + Math.random(),
           role: 'user',
-          content: chunk.text || '',
+          content: chunk.text || chunk.Text || '',
           reasoning_content: '',
           agent_name: '',
           tools: [],
@@ -120,40 +186,48 @@ export const useChatStore = defineStore('chat', () => {
             role: 'assistant',
             content: '',
             reasoning_content: '',
-            agent_name: chunk.agent_name || 'main',
+            agent_name: chunk.agent_name || chunk.agentName || 'main',
             tools: [],
             created_at: Date.now(),
           };
           list.push(currentAssistantMsg);
         }
 
-        if (chunk.agent_name) {
-          currentAssistantMsg.agent_name = chunk.agent_name;
+        const agentName = chunk.agent_name || chunk.agentName;
+        if (agentName) {
+          currentAssistantMsg.agent_name = agentName;
         }
 
-        if (chunk.reasoning_text) {
-          currentAssistantMsg.reasoning_content += chunk.reasoning_text;
+        const reasoning = chunk.reasoning_text || chunk.reasoningText;
+        if (reasoning) {
+          currentAssistantMsg.reasoning_content += reasoning;
         }
 
-        if (chunk.text) {
-          currentAssistantMsg.content += chunk.text;
+        const text = chunk.text || chunk.Text;
+        if (text) {
+          currentAssistantMsg.content += text;
         }
 
-        if (chunk.tool_info) {
-          const t = chunk.tool_info;
+        const toolInfo = chunk.tool_info || chunk.toolInfo;
+        if (toolInfo) {
+          const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
+          const tName = toolInfo.tool_name || toolInfo.toolName || '';
+          const tArgs = toolInfo.arguments || '';
+          const tResult = toolInfo.result_preview || toolInfo.resultPreview;
+
           const existingTool = currentAssistantMsg.tools.find(
-            (item) => item.tool_call_id === t.tool_call_id
+            (item) => item.tool_call_id === tId
           );
           if (existingTool) {
-            if (t.result_preview) existingTool.result_preview = t.result_preview;
+            if (tResult) existingTool.result_preview = tResult;
             existingTool.status = 'completed';
           } else {
             currentAssistantMsg.tools.push({
-              tool_call_id: t.tool_call_id,
-              tool_name: t.tool_name,
-              arguments: t.arguments,
-              result_preview: t.result_preview,
-              status: t.result_preview ? 'completed' : 'running',
+              tool_call_id: tId,
+              tool_name: tName,
+              arguments: tArgs,
+              result_preview: tResult,
+              status: tResult ? 'completed' : 'running',
             });
           }
         }
@@ -285,50 +359,73 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // 统一处理 SSE Chunk 核心逻辑
-  function handleStreamChunk(chunk: StreamChunk, msg: UIChatMessage) {
-    if (chunk.session_id) {
-      currentSessionId.value = chunk.session_id;
+  function handleStreamChunk(chunk: any, msg: UIChatMessage) {
+    const sId = chunk.session_id || chunk.sessionId;
+    if (sId && sId !== 'undefined') {
+      const isNewSession = !currentSessionId.value || currentSessionId.value !== sId;
+      currentSessionId.value = sId;
+
+      if (isNewSession) {
+        fetchSessions();
+        if (router.currentRoute.value.path === '/chat' || router.currentRoute.value.path === '/chat/') {
+          router.push(`/chat/${sId}`);
+        }
+      }
     }
 
-    if (chunk.agent_name) {
-      msg.agent_name = chunk.agent_name;
+    const agentName = chunk.agent_name || chunk.agentName;
+    if (agentName) {
+      msg.agent_name = agentName;
     }
 
-    if (chunk.status) {
+    if (typeof chunk.status !== 'undefined') {
       sessionStatus.value = chunk.status;
     }
 
     // 思考过程增量
-    if (chunk.reasoning_text) {
-      msg.reasoning_content += chunk.reasoning_text;
+    const reasoning = chunk.reasoning_text || chunk.reasoningText;
+    if (reasoning) {
+      msg.reasoning_content += reasoning;
     }
 
     // 文本回答增量
-    if (chunk.text) {
-      msg.content += chunk.text;
+    const text = chunk.text || chunk.Text;
+    if (text) {
+      msg.content += text;
     }
 
     // 自动工具日志
-    if (chunk.tool_info) {
-      const t = chunk.tool_info;
-      const existing = msg.tools.find((x) => x.tool_call_id === t.tool_call_id);
+    const toolInfo = chunk.tool_info || chunk.toolInfo;
+    if (toolInfo) {
+      const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
+      const tName = toolInfo.tool_name || toolInfo.toolName || '';
+      const tArgs = toolInfo.arguments || '';
+      const tResult = toolInfo.result_preview || toolInfo.resultPreview;
+
+      const existing = msg.tools.find((x) => x.tool_call_id === tId);
       if (existing) {
-        if (t.result_preview) existing.result_preview = t.result_preview;
+        if (tResult) existing.result_preview = tResult;
         existing.status = 'completed';
       } else {
         msg.tools.push({
-          tool_call_id: t.tool_call_id,
-          tool_name: t.tool_name,
-          arguments: t.arguments,
-          result_preview: t.result_preview,
-          status: t.result_preview ? 'completed' : 'running',
+          tool_call_id: tId,
+          tool_name: tName,
+          arguments: tArgs,
+          result_preview: tResult,
+          status: tResult ? 'completed' : 'running',
         });
       }
     }
 
     // 中断事件 / 待确认工具调用
-    if (chunk.pending_tool_calls && chunk.pending_tool_calls.length > 0) {
-      pendingToolCalls.value = chunk.pending_tool_calls;
+    const pending = chunk.pending_tool_calls || chunk.pendingToolCalls;
+    if (pending && pending.length > 0) {
+      pendingToolCalls.value = pending.map((p: any) => ({
+        interrupt_id: p.interrupt_id || p.interruptId || '',
+        tool_call_id: p.tool_call_id || p.toolCallId || '',
+        tool_name: p.tool_name || p.toolName || '',
+        arguments: p.arguments || '',
+      }));
       sessionStatus.value = SessionStatus.SS_INTERRUPTED;
     }
 
@@ -376,10 +473,14 @@ export const useChatStore = defineStore('chat', () => {
     pendingToolCalls,
     isSessionsLoading,
     isHistoryLoading,
+    hasMoreHistory,
+    historyPage,
+    isLoadingMoreHistory,
     isGenerating,
     selectedModel,
     fetchSessions,
     selectSession,
+    loadMoreHistory,
     sendMessage,
     resumeStream,
     stopGeneration,
