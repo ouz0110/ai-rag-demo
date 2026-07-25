@@ -2,9 +2,7 @@ package nocli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
 
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/pkg/log"
@@ -62,6 +60,33 @@ func (s *ChatBiz) runAgentLoop(
 	iteration := 0
 	totalToolCalls := 0
 
+	// 🎯 检查是否是从中断恢复的会话：精确定位尚未执行/尚未产生 Tool 响应消息的 pending ToolCalls 集合
+	_, unexecutedToolCalls := findUnexecutedToolCalls(messages)
+	if len(unexecutedToolCalls) > 0 {
+		log.Debugw(ctx, "resume_pending_tool_calls_execution", append(baseFields, "unexecuted_tools_count", len(unexecutedToolCalls))...)
+		res, err := s.processToolCalls(ctx, sessionID, baseFields, unexecutedToolCalls, approvedTools, rejectedTools, &totalToolCalls, emitter)
+		if err != nil {
+			return nil, err
+		}
+		if len(res.ExecutedMsgs) > 0 {
+			messages = append(messages, res.ExecutedMsgs...)
+		}
+		if res.HasInterrupt {
+			emitter(&pb.StreamChunk{
+				Event:            pb.StreamEventType_SET_INTERRUPT,
+				SessionId:        sessionID,
+				Status:           pb.SessionStatus_SS_INTERRUPTED,
+				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
+			})
+			return &LoopResult{
+				Messages:         messages,
+				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
+				Status:           pb.SessionStatus_SS_INTERRUPTED,
+				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
+			}, nil
+		}
+	}
+
 	for {
 		iteration++
 
@@ -78,15 +103,14 @@ func (s *ChatBiz) runAgentLoop(
 
 		// 🎯 通过策略闭包获取当前轮次组合完成的 Assistant 消息
 		msg, err := fetcher(ctx, req)
-		if err != nil && len(req.Tools) > 0 && isFormatRequestBodyError(err) {
+		if err != nil && len(req.Tools) > 0 {
 			log.Warnw(ctx, "llm_tools_unsupported_fallback", append(baseFields, "iteration", iteration, "error", err)...)
 			req.Tools = nil
 			msg, err = fetcher(ctx, req)
 		}
 		if err != nil {
-			cleanedErr := cleanLLMError(err)
-			log.Errorw(ctx, "llm_call_error", append(baseFields, "iteration", iteration, "error", cleanedErr)...)
-			return nil, fmt.Errorf("LLM 调用失败: %v", cleanedErr)
+			log.Errorw(ctx, "llm_call_error", append(baseFields, "iteration", iteration, "error", err)...)
+			return nil, fmt.Errorf("LLM 调用失败: %v", err)
 		}
 
 		if msg.Content == "" && len(msg.ToolCalls) == 0 {
@@ -138,42 +162,6 @@ func (s *ChatBiz) runAgentLoop(
 	}
 }
 
-// cleanLLMError 针对 ModelArts 等平台返回 SSE 格式错误 (data:{"error":...}) 导致的 invalid character 'd' 异常进行解析剥离
-func cleanLLMError(err error) error {
-	if err == nil {
-		return nil
-	}
-	errMsg := err.Error()
-
-	if strings.Contains(errMsg, "data:{") || strings.Contains(errMsg, "ModelArts.") {
-		if idx := strings.Index(errMsg, "body: data:"); idx != -1 {
-			bodyStr := strings.TrimSpace(errMsg[idx+len("body: data:"):])
-			var errObj struct {
-				Error struct {
-					Code    string `json:"code"`
-					Message string `json:"message"`
-				} `json:"error"`
-				ErrorCode string `json:"error_code"`
-				ErrorMsg  string `json:"error_msg"`
-			}
-			if jsonErr := json.Unmarshal([]byte(bodyStr), &errObj); jsonErr == nil {
-				msg := errObj.ErrorMsg
-				if msg == "" {
-					msg = errObj.Error.Message
-				}
-				code := errObj.ErrorCode
-				if code == "" {
-					code = errObj.Error.Code
-				}
-				if msg != "" {
-					return fmt.Errorf("error, status code: 400, status: 400 Bad Request, message: [%s] %s", code, msg)
-				}
-			}
-		}
-	}
-	return err
-}
-
 // sanitizeMessages 净化请求消息中的空 tool_calls 数组，防止 OpenAI 兼容 API 报 400 Request Format Error
 func sanitizeMessages(messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
 	sanitized := make([]openai.ChatCompletionMessage, len(messages))
@@ -186,14 +174,6 @@ func sanitizeMessages(messages []openai.ChatCompletionMessage) []openai.ChatComp
 	return sanitized
 }
 
-func isFormatRequestBodyError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "ModelArts.81001") || strings.Contains(msg, "Failed to format request body")
-}
-
 func (s *ChatBiz) resolveModel(model string) string {
 	if model != "" {
 		return model
@@ -202,4 +182,44 @@ func (s *ChatBiz) resolveModel(model string) string {
 		return s.cfg.Source.OpenAI.Model
 	}
 	return "deepseek-v3.2"
+}
+
+// findUnexecutedToolCalls 寻找历史消息末尾尚未执行/未产生 Tool 响应消息的 ToolCalls 集合
+func findUnexecutedToolCalls(messages []openai.ChatCompletionMessage) (int, []openai.ToolCall) {
+	if len(messages) == 0 {
+		return -1, nil
+	}
+
+	// 1. 从后往前寻找最后一条带有 ToolCalls 的 Assistant 消息
+	assistantIdx := -1
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == openai.ChatMessageRoleAssistant && len(messages[i].ToolCalls) > 0 {
+			assistantIdx = i
+			break
+		}
+	}
+
+	if assistantIdx == -1 {
+		return -1, nil
+	}
+
+	assistantMsg := messages[assistantIdx]
+
+	// 2. 收集该 Assistant 消息之后已经存在的 Tool 响应消息的 ToolCallID 集合
+	executedToolIDs := make(map[string]bool)
+	for i := assistantIdx + 1; i < len(messages); i++ {
+		if messages[i].Role == openai.ChatMessageRoleTool && messages[i].ToolCallID != "" {
+			executedToolIDs[messages[i].ToolCallID] = true
+		}
+	}
+
+	// 3. 精确筛选出尚未产生 Tool 响应消息的 pending ToolCall 列表
+	unexecuted := make([]openai.ToolCall, 0, len(assistantMsg.ToolCalls))
+	for _, tc := range assistantMsg.ToolCalls {
+		if !executedToolIDs[tc.ID] {
+			unexecuted = append(unexecuted, tc)
+		}
+	}
+
+	return assistantIdx, unexecuted
 }

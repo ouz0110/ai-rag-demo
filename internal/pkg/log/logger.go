@@ -1,9 +1,11 @@
 package log
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-kratos/kratos/v2/log"
 	"github.com/natefinch/lumberjack"
@@ -134,4 +136,35 @@ func NewGormLogger(name string) *GormLogger {
 	l.IgnoreRecordNotFoundError = true
 
 	return &GormLogger{l}
+}
+
+func (l *GormLogger) Trace(ctx context.Context, begin time.Time, fc func() (sql string, rowsAffected int64), err error) {
+	// 获取 SQL 语句和受影响行数
+	sql, rows := fc()
+	elapsed := time.Since(begin)
+
+	logger := LoggerFromContext(ctx)
+	if logger == nil {
+		logger = l.ZapLogger
+	}
+	// 注意：如果你还想保留 GORM 原有的错误处理逻辑，可以参考源码做更多判断，这里仅做演示
+	fields, msgFields := mergeKeysAndValues([]interface{}{
+		"sql", sql,
+		"row", rows,
+		"elapesd", float64(elapsed.Nanoseconds()) / 1e6,
+	})
+
+	var msg string
+	if c := len(msgFields); c == 1 {
+		msg = msgFields[0].String
+	} else if c > 1 {
+		var ss []string
+		for _, v := range msgFields {
+			ss = append(ss, v.String)
+		}
+		msg = fmt.Sprintf("multiple message combined: %s", strings.Join(ss, ", "))
+		logger.Warn("multiple message field")
+	}
+
+	logger.Log(zapcore.DebugLevel, msg, fields...)
 }

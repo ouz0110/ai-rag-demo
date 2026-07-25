@@ -20,6 +20,8 @@ type NocliInterruptModel struct {
 	SessionID string
 	// 中断状态
 	Status pb.InterruptStatus
+	// 授权范围
+	ApproveScope pb.ApproveScope
 	// OpenAI ToolCallID
 	ToolCallID string
 	// 待执行的工具名称
@@ -46,6 +48,7 @@ func (m *NocliInterruptModel) DTO() *NocliInterrupt {
 		InterruptID:   m.InterruptID,
 		SessionID:     m.SessionID,
 		Status:        m.Status,
+		ApproveScope:  m.ApproveScope,
 		ToolCallID:    m.ToolCallID,
 		ToolName:      m.ToolName,
 		Arguments:     m.Arguments,
@@ -62,6 +65,7 @@ type NocliInterrupt struct {
 	InterruptID   string             `json:"interrupt_id"`
 	SessionID     string             `json:"session_id"`
 	Status        pb.InterruptStatus `json:"status"`
+	ApproveScope  pb.ApproveScope    `json:"approve_scope"`
 	ToolCallID    string             `json:"tool_call_id"`
 	ToolName      string             `json:"tool_name"`
 	Arguments     string             `json:"arguments"`
@@ -95,6 +99,16 @@ func (s *NocliInterruptRepo) GetPendingBySessionID(ctx context.Context, sessionI
 	return list, nil
 }
 
+func (s *NocliInterruptRepo) GetApprovedSessionTools(ctx context.Context, sessionID string) ([]string, error) {
+	var toolNames []string
+	if err := s.GormDB(ctx).Model(&NocliInterruptModel{}).
+		Where("session_id=? AND status=? AND approve_scope=?", sessionID, pb.InterruptStatus_IS_APPROVED, pb.ApproveScope_AS_SESSION_TOOL).
+		Pluck("DISTINCT tool_name", &toolNames).Error; err != nil {
+		return nil, err
+	}
+	return toolNames, nil
+}
+
 func (s *NocliInterruptRepo) CreateBatch(ctx context.Context, models []*NocliInterruptModel) error {
 	if len(models) == 0 {
 		return nil
@@ -102,9 +116,10 @@ func (s *NocliInterruptRepo) CreateBatch(ctx context.Context, models []*NocliInt
 	return s.GormDB(ctx).Model(&NocliInterruptModel{}).Create(&models).Error
 }
 
-func (s *NocliInterruptRepo) UpdateStatus(ctx context.Context, interruptID string, status pb.InterruptStatus, handledAt int64, handlerOpenid, reason string) error {
+func (s *NocliInterruptRepo) UpdateStatus(ctx context.Context, interruptID string, status pb.InterruptStatus, scope pb.ApproveScope, handledAt int64, handlerOpenid, reason string) error {
 	updates := map[string]interface{}{
 		"status":         status,
+		"approve_scope":  scope,
 		"handled_at":     handledAt,
 		"handler_openid": handlerOpenid,
 		"reject_reason":  reason,

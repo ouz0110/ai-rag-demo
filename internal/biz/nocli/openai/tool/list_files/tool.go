@@ -28,8 +28,8 @@ func NewTool(cfg *conf.Config) *Tool {
 	return &Tool{cfg: cfg}
 }
 
-func (t *Tool) RequiresApproval() bool {
-	return true
+func (t *Tool) RequiresApproval(argsJSON string) bool {
+	return false
 }
 
 func (t *Tool) Definition() openai.Tool {

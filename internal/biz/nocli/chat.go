@@ -6,12 +6,14 @@ import (
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	"ai-rag-demo/internal/biz/nocli/openai/agent"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	tool "ai-rag-demo/internal/biz/nocli/openai/tool"
 	"ai-rag-demo/internal/cache"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
 	"ai-rag-demo/internal/pkg/log"
+	"ai-rag-demo/internal/pkg/skill"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -20,6 +22,8 @@ type ChatBiz struct {
 	cache           *cache.Cache
 	openaiChatModel *chatmodel.ChatModel
 	toolRegistry    *tool.Registry
+	agentRegistry   *agent.Registry
+	skillManager    *skill.Manager
 	cfg             *conf.Config
 	allDb           *data.DB
 }
@@ -30,10 +34,21 @@ func NewChatBiz(
 	cfg *conf.Config,
 	allDb *data.DB,
 ) *ChatBiz {
+	var skillsDir string
+	if cfg != nil && cfg.Source.Skill != nil {
+		skillsDir = cfg.Source.Skill.Path
+	}
+	skillReg := skill.NewRegistry(skillsDir)
+	if err := skillReg.Scan(); err != nil {
+		log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
+	}
+
 	return &ChatBiz{
 		cache:           cache,
 		openaiChatModel: openaiChatModel,
 		toolRegistry:    tool.NewRegistry(cfg),
+		agentRegistry:   agent.NewRegistry(),
+		skillManager:    skill.NewManager(skillReg),
 		cfg:             cfg,
 		allDb:           allDb,
 	}
@@ -52,9 +67,10 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 
 	tools := s.toolRegistry.BuildTools()
 	model := s.resolveModel(req.Model)
+	approvedTools := s.loadSessionApprovedTools(ctx, sessionID)
 
 	start := time.Now()
-	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, model, nil, nil)
+	loopRes, err := s.runChatLoop(ctx, sessionID, messages, tools, model, approvedTools, nil)
 	duration := time.Since(start)
 	if err != nil {
 		log.Errorw(ctx, "completion_error", "session_id", sessionID, "duration_ms", duration.Milliseconds(), "error", err)

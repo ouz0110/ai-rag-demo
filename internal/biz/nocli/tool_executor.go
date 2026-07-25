@@ -2,10 +2,12 @@ package nocli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	openaierr "ai-rag-demo/internal/biz/nocli/openai/error"
 	"ai-rag-demo/internal/common"
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
@@ -59,27 +61,11 @@ func (s *ChatBiz) processToolCalls(
 		}
 
 		// 2. 检查是否需要审批且未在授权放行名单中
-		if s.toolRegistry.RequiresApproval(toolName) && !approvedTools[toolName] && !approvedTools[toolID] {
+		if s.toolRegistry.RequiresApproval(toolName, tc.Function.Arguments) && !approvedTools[toolName] && !approvedTools[toolID] {
 			// 🎯 严格顺序控制：一旦遇到第一个需要审批的高危工具，立即中断生成挂起事项并切出！
-			interruptID := utils.NewUUID()
-			result.HasInterrupt = true
-			result.PendingInterrupt = &dataBase.NocliInterruptModel{
-				InterruptID: interruptID,
-				SessionID:   sessionID,
-				Status:      pb.InterruptStatus_IS_PENDING,
-				ToolCallID:  toolID,
-				ToolName:    toolName,
-				Arguments:   tc.Function.Arguments,
-				CreatedAt:   time.Now().Unix(),
-			}
-			result.PendingToolCall = &pb.PendingToolCall{
-				InterruptId: interruptID,
-				ToolCallId:  toolID,
-				ToolName:    toolName,
-				Arguments:   tc.Function.Arguments,
-			}
-
-			log.Debugw(ctx, "tool_approval_interrupted", append(baseFields, "tool_name", toolName, "tool_id", toolID)...)
+			intRes := s.buildInterruptResult(ctx, sessionID, toolID, toolName, tc.Function.Arguments, baseFields)
+			intRes.ExecutedMsgs = result.ExecutedMsgs
+			result = intRes
 			break // 停止遍历后续任何 ToolCall
 		}
 
@@ -101,6 +87,13 @@ func (s *ChatBiz) processToolCalls(
 
 		toolResult, err := s.toolRegistry.Call(ctx, toolName, tc.Function.Arguments)
 		if err != nil {
+			var interruptErr openaierr.InterruptErr
+			if errors.As(err, &interruptErr) && !approvedTools[toolName] && !approvedTools[toolID] {
+				intRes := s.buildInterruptResult(ctx, sessionID, toolID, toolName, tc.Function.Arguments, baseFields)
+				intRes.ExecutedMsgs = result.ExecutedMsgs
+				result = intRes
+				break
+			}
 			toolResult = fmt.Sprintf("工具执行失败: %v", err)
 			log.Debugw(ctx, "tool_result_error", append(baseFields, "tool_id", toolID, "tool_name", toolName, "error", err)...)
 		} else {
@@ -141,52 +134,33 @@ func (s *ChatBiz) processToolCalls(
 	return result, nil
 }
 
-// executeResumeTool 执行 Resume 中的中断决策，更新中断表状态，并返回生成的 Tool 消息（不操作消息持久化）
-func (s *ChatBiz) executeResumeTool(
+// buildInterruptResult 封装生成中断挂起事项结构体的通用辅助函数
+func (s *ChatBiz) buildInterruptResult(
 	ctx context.Context,
-	userOpenid string,
-	interrupt *dataBase.NocliInterruptModel,
-	action pb.ResumeAction,
-	reason string,
-) (openai.ChatCompletionMessage, error) {
-	now := time.Now().Unix()
-	var toolResult string
+	sessionID, toolID, toolName, arguments string,
+	baseFields []interface{},
+) *ProcessToolCallsResult {
+	interruptID := utils.NewUUID()
+	log.Debugw(ctx, "tool_approval_interrupted", append(baseFields, "tool_name", toolName, "tool_id", toolID)...)
 
-	if action == pb.ResumeAction_RA_APPROVE {
-		result, err := s.toolRegistry.Call(ctx, interrupt.ToolName, interrupt.Arguments)
-		if err != nil {
-			toolResult = fmt.Sprintf("工具执行失败: %v", err)
-		} else {
-			toolResult = result
-		}
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(
-			ctx,
-			interrupt.InterruptID,
-			pb.InterruptStatus_IS_APPROVED,
-			now,
-			userOpenid,
-			reason,
-		)
-	} else {
-		if reason == "" {
-			reason = "用户拒绝执行该操作"
-		}
-		toolResult = fmt.Sprintf("操作被用户拒绝: %s", reason)
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(
-			ctx,
-			interrupt.InterruptID,
-			pb.InterruptStatus_IS_REJECTED,
-			now,
-			userOpenid,
-			reason,
-		)
+	return &ProcessToolCallsResult{
+		HasInterrupt: true,
+		PendingInterrupt: &dataBase.NocliInterruptModel{
+			InterruptID: interruptID,
+			SessionID:   sessionID,
+			Status:      pb.InterruptStatus_IS_PENDING,
+			ToolCallID:  toolID,
+			ToolName:    toolName,
+			Arguments:   arguments,
+			CreatedAt:   time.Now().Unix(),
+		},
+		PendingToolCall: &pb.PendingToolCall{
+			InterruptId: interruptID,
+			ToolCallId:  toolID,
+			ToolName:    toolName,
+			Arguments:   arguments,
+		},
 	}
-
-	return openai.ChatCompletionMessage{
-		Role:       openai.ChatMessageRoleTool,
-		Content:    toolResult,
-		ToolCallID: interrupt.ToolCallID,
-	}, nil
 }
 
 // cancelPendingInterruptsOnNewCompletion 当用户发送新问题时，自动作废旧的待处理中断，并返回产生的取消消息
@@ -205,6 +179,7 @@ func (s *ChatBiz) cancelPendingInterruptsOnNewCompletion(ctx context.Context, se
 			ctx,
 			pm.InterruptID,
 			pb.InterruptStatus_IS_EXPIRED,
+			pm.ApproveScope,
 			now,
 			user.Openid,
 			"用户发送了新问题，自动取消旧中断",

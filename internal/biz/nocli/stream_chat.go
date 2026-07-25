@@ -28,10 +28,11 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 
 	tools := s.toolRegistry.BuildTools()
 	model := s.resolveModel(req.Model)
+	approvedTools := s.loadSessionApprovedTools(ctx, sessionID)
 
 	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "model", model)
 
-	loopRes, err := s.runStreamChatLoop(ctx, sessionID, messages, tools, model, nil, nil, emitter)
+	loopRes, err := s.runStreamChatLoop(ctx, sessionID, messages, tools, model, approvedTools, nil, emitter)
 	if err != nil {
 		log.Errorw(ctx, "stream_completion_error", "session_id", sessionID, "error", err)
 		emitter(&pb.StreamChunk{

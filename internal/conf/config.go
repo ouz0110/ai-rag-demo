@@ -86,6 +86,10 @@ type NocliConfig struct {
 	ChunkLines      int      `json:"chunk_lines"`
 }
 
+type SkillConfig struct {
+	Path string `json:"path"`
+}
+
 type Config struct {
 	Secret      string `json:"secret"`
 	Name        string `json:"name"`
@@ -125,7 +129,8 @@ type Config struct {
 		Database       map[string]*DBConfig    `json:"database"`
 		OTel           *OTel                   `json:"otel"`
 		OpenAI         *OpenAI                 `json:"openai"`
-		Nocli          *NocliConfig             `json:"nocli"`
+		Nocli          *NocliConfig            `json:"nocli"`
+		Skill          *SkillConfig            `json:"skill"`
 		Nacos          struct {
 			Addr      string `json:"addr"`
 			Port      string `json:"port"`

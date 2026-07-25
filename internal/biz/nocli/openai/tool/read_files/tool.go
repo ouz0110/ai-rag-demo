@@ -57,7 +57,7 @@ func NewTool(cfg *conf.Config) *Tool {
 	}
 }
 
-func (t *Tool) RequiresApproval() bool {
+func (t *Tool) RequiresApproval(argsJSON string) bool {
 	return false
 }
 

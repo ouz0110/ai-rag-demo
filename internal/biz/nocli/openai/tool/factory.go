@@ -9,12 +9,13 @@ import (
 
 	list_file "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
 	readfiles "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
+	terminaltool "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
 )
 
 type Tool interface {
 	Definition() openai.Tool
 	Run(ctx context.Context, argsJSON string) (string, error)
-	RequiresApproval() bool
+	RequiresApproval(argsJSON string) bool
 }
 
 type Registry struct {
@@ -24,8 +25,9 @@ type Registry struct {
 func NewRegistry(cfg *conf.Config) *Registry {
 	return &Registry{
 		tools: map[string]Tool{
-			list_file.ToolName: list_file.NewTool(cfg),
-			readfiles.ToolName: readfiles.NewTool(cfg),
+			list_file.ToolName:    list_file.NewTool(cfg),
+			readfiles.ToolName:    readfiles.NewTool(cfg),
+			terminaltool.ToolName: terminaltool.NewTool(cfg),
 		},
 	}
 }
@@ -46,10 +48,10 @@ func (r *Registry) Call(ctx context.Context, name, argsJSON string) (string, err
 	return t.Run(ctx, argsJSON)
 }
 
-func (r *Registry) RequiresApproval(name string) bool {
+func (r *Registry) RequiresApproval(name, argsJSON string) bool {
 	t, ok := r.tools[name]
 	if !ok {
 		return false
 	}
-	return t.RequiresApproval()
+	return t.RequiresApproval(argsJSON)
 }

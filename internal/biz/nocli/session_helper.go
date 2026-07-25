@@ -7,7 +7,7 @@ import (
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
-	codeanalyzer "ai-rag-demo/internal/biz/nocli/openai/prompt/code_analyzer"
+	"ai-rag-demo/internal/biz/nocli/openai/agent"
 	"ai-rag-demo/internal/common"
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
@@ -22,7 +22,12 @@ func (s *ChatBiz) initOrCreateSession(ctx context.Context, sessionID, userMsg st
 	if workDir == "" {
 		workDir = "."
 	}
-	systemPrompt := codeanalyzer.SystemPrompt(workDir)
+
+	ag, ok := s.agentRegistry.Get(agent.AgentMain)
+	if !ok {
+		ag = agent.NewMainAgent()
+	}
+	systemPrompt := ag.SystemPrompt(workDir, s.skillManager)
 	_, user := common.UserFromContext(ctx)
 	now := time.Now().Unix()
 
@@ -86,6 +91,22 @@ func (s *ChatBiz) prepareMessagesForCompletion(ctx context.Context, sessionID, u
 	return messages, newMessageStart, nil
 }
 
+// loadSessionApprovedTools 载入当前 Session 历史上已获得 AS_SESSION_TOOL 授权的工具白名单
+func (s *ChatBiz) loadSessionApprovedTools(ctx context.Context, sessionID string) map[string]bool {
+	approvedMap := make(map[string]bool)
+	if sessionID == "" {
+		return approvedMap
+	}
+
+	toolNames, err := s.allDb.Base.NocliInterruptRepo.GetApprovedSessionTools(ctx, sessionID)
+	if err == nil {
+		for _, name := range toolNames {
+			approvedMap[name] = true
+		}
+	}
+	return approvedMap
+}
+
 // validateAndPrepareResume 校验 Resume 请求合法性，更新中断记录状态，并构造放行与拒绝工具集合
 func (s *ChatBiz) validateAndPrepareResume(ctx context.Context, req *pb.ResumeRequest) (map[string]bool, map[string]string, error) {
 	_, user := common.UserFromContext(ctx)
@@ -113,7 +134,7 @@ func (s *ChatBiz) validateAndPrepareResume(ctx context.Context, req *pb.ResumeRe
 	}
 
 	now := time.Now().Unix()
-	approvedTools := make(map[string]bool)
+	approvedTools := s.loadSessionApprovedTools(ctx, sessionID)
 	rejectedTools := make(map[string]string)
 
 	if req.Action == pb.ResumeAction_RA_APPROVE {
@@ -121,14 +142,14 @@ func (s *ChatBiz) validateAndPrepareResume(ctx context.Context, req *pb.ResumeRe
 		if req.ApproveScope == pb.ApproveScope_AS_SESSION_TOOL {
 			approvedTools[interrupt.ToolName] = true
 		}
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_APPROVED, now, user.Openid, req.Reason)
+		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_APPROVED, req.ApproveScope, now, user.Openid, req.Reason)
 	} else {
 		reason := req.Reason
 		if reason == "" {
 			reason = "用户拒绝执行该操作"
 		}
 		rejectedTools[interrupt.ToolCallID] = reason
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_REJECTED, now, user.Openid, reason)
+		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(ctx, interruptID, pb.InterruptStatus_IS_REJECTED, req.ApproveScope, now, user.Openid, reason)
 	}
 
 	_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_RUNNING)
