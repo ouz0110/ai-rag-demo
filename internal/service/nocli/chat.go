@@ -2,12 +2,14 @@ package nocli
 
 import (
 	"context"
-	"encoding/json"
+	"io"
 	"net/http"
 
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli"
 	"ai-rag-demo/internal/pkg/sse"
+
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type ChatService struct {
@@ -53,6 +55,10 @@ func (s *ChatService) StreamResume(req *pb.ResumeRequest, stream pb.NocliChat_St
 	return s.chatBiz.StreamResume(ctx, req, emitter)
 }
 
+var protoUnmarshaler = protojson.UnmarshalOptions{
+	DiscardUnknown: true,
+}
+
 // StreamCompletionHTTP 专门提供给 HTTP/REST 框架 (如 Kratos/Gin/net.http) 的 SSE 响应接口
 func (s *ChatService) StreamCompletionHTTP(w http.ResponseWriter, r *http.Request) {
 	emitter, err := sse.NewStreamEmitter(w)
@@ -61,9 +67,15 @@ func (s *ChatService) StreamCompletionHTTP(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
 	var req pb.CompletionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := protoUnmarshaler.Unmarshal(bodyBytes, &req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -78,9 +90,15 @@ func (s *ChatService) StreamResumeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyBytes, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		return
+	}
+
 	var req pb.ResumeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if err := protoUnmarshaler.Unmarshal(bodyBytes, &req); err != nil {
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
