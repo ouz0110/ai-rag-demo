@@ -38,9 +38,20 @@ func (b *BaseAgent) ProcessToolCalls(
 		toolID := tc.ID
 
 		if reason, isRejected := rejectedTools[toolID]; isRejected {
+			rejText := fmt.Sprintf("操作被用户拒绝: %s", reason)
+			emitter(&pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_TOOL_RESULT,
+				SessionId: sessionID,
+				Status:    pb.SessionStatus_SS_RUNNING,
+				ToolInfo: &pb.StreamToolInfo{
+					ToolCallId:    toolID,
+					ToolName:      toolName,
+					ResultPreview: rejText,
+				},
+			})
 			toolMsg := openai.ChatCompletionMessage{
 				Role:       openai.ChatMessageRoleTool,
-				Content:    fmt.Sprintf("操作被用户拒绝: %s", reason),
+				Content:    rejText,
 				ToolCallID: toolID,
 			}
 			result.ExecutedMsgs = append(result.ExecutedMsgs, toolMsg)

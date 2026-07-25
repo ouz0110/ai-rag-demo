@@ -233,27 +233,41 @@ func (m *SessionManager) DeleteSession(ctx context.Context, sessionID string) er
 	})
 }
 
-// MapMessageModelToStreamChunk 将数据库持久化的 NocliMessageModel 映射为前端统一渲染的回放态 StreamChunk (方案 A)
-func MapMessageModelToStreamChunk(sessionID string, model dataBase.NocliMessageModel) *pb.StreamChunk {
+// MapMessageModelToStreamChunks 将数据库持久化的 NocliMessageModel 映射为前端统一渲染的回放态 StreamChunk 切片
+func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessageModel) []*pb.StreamChunk {
 	var chatMsg openai.ChatCompletionMessage
 	if err := json.Unmarshal([]byte(model.Msg), &chatMsg); err != nil {
 		return nil
 	}
 
+	if chatMsg.Role == "system" {
+		return nil
+	}
+
+	chunks := make([]*pb.StreamChunk, 0)
+
 	switch chatMsg.Role {
 	case openai.ChatMessageRoleUser:
-		return &pb.StreamChunk{
+		chunks = append(chunks, &pb.StreamChunk{
 			Event:     pb.StreamEventType_SET_DONE,
 			Role:      chatMsg.Role,
 			SessionId: sessionID,
 			Status:    pb.SessionStatus_SS_IDLE,
 			Text:      chatMsg.Content,
-		}
+		})
 
 	case openai.ChatMessageRoleAssistant:
-		if len(chatMsg.ToolCalls) > 0 {
-			tc := chatMsg.ToolCalls[0]
-			return &pb.StreamChunk{
+		if chatMsg.Content != "" || chatMsg.ReasoningContent != "" {
+			chunks = append(chunks, &pb.StreamChunk{
+				Event:         pb.StreamEventType_SET_TEXT_DELTA,
+				Role:          chatMsg.Role,
+				SessionId:     sessionID,
+				Text:          chatMsg.Content,
+				ReasoningText: chatMsg.ReasoningContent,
+			})
+		}
+		for _, tc := range chatMsg.ToolCalls {
+			chunks = append(chunks, &pb.StreamChunk{
 				Event:     pb.StreamEventType_SET_TOOL_START,
 				Role:      chatMsg.Role,
 				SessionId: sessionID,
@@ -262,30 +276,22 @@ func MapMessageModelToStreamChunk(sessionID string, model dataBase.NocliMessageM
 					ToolName:   tc.Function.Name,
 					Arguments:  tc.Function.Arguments,
 				},
-			}
-		}
-		return &pb.StreamChunk{
-			Event:         pb.StreamEventType_SET_DONE,
-			Role:          chatMsg.Role,
-			SessionId:     sessionID,
-			Status:        pb.SessionStatus_SS_IDLE,
-			Text:          chatMsg.Content,
-			ReasoningText: chatMsg.ReasoningContent,
+			})
 		}
 
 	case openai.ChatMessageRoleTool:
-		return &pb.StreamChunk{
+		chunks = append(chunks, &pb.StreamChunk{
 			Event:     pb.StreamEventType_SET_TOOL_RESULT,
 			Role:      chatMsg.Role,
 			SessionId: sessionID,
 			ToolInfo: &pb.StreamToolInfo{
 				ToolCallId:    chatMsg.ToolCallID,
-				ResultPreview: chatMsg.Content,
+				ResultPreview: TruncateText(chatMsg.Content, 200),
 			},
-		}
+		})
 	}
 
-	return nil
+	return chunks
 }
 
 // GetSessionHistory 获取指定会话的历史记录与挂起的中断信息 (方案 A: 返回用于前端统一渲染与回放的 StreamChunk 切片)
@@ -320,10 +326,10 @@ func (m *SessionManager) GetSessionHistory(ctx context.Context, req *pb.GetSessi
 		return nil, fmt.Errorf("获取会话消息历史失败: %v", err)
 	}
 
-	chunks := make([]*pb.StreamChunk, 0, len(msgModels))
+	chunks := make([]*pb.StreamChunk, 0, len(msgModels)*2)
 	for _, mItem := range msgModels {
-		if chunk := MapMessageModelToStreamChunk(sessionID, mItem); chunk != nil {
-			chunks = append(chunks, chunk)
+		if itemChunks := MapMessageModelToStreamChunks(sessionID, mItem); len(itemChunks) > 0 {
+			chunks = append(chunks, itemChunks...)
 		}
 	}
 
