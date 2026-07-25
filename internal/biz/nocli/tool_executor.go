@@ -97,54 +97,6 @@ func (s *ChatBiz) processToolCalls(
 	return result, nil
 }
 
-// executeResumeTool 执行 Resume 中的中断决策，更新中断表状态，并返回生成的 Tool 消息（不操作消息持久化）
-func (s *ChatBiz) executeResumeTool(
-	ctx context.Context,
-	userOpenid string,
-	interrupt *dataBase.NocliInterruptModel,
-	action pb.ResumeAction,
-	reason string,
-) (openai.ChatCompletionMessage, error) {
-	now := time.Now().Unix()
-	var toolResult string
-
-	if action == pb.ResumeAction_RA_APPROVE {
-		result, err := s.toolRegistry.Call(ctx, interrupt.ToolName, interrupt.Arguments)
-		if err != nil {
-			toolResult = fmt.Sprintf("工具执行失败: %v", err)
-		} else {
-			toolResult = result
-		}
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(
-			ctx,
-			interrupt.InterruptID,
-			pb.InterruptStatus_IS_APPROVED,
-			now,
-			userOpenid,
-			reason,
-		)
-	} else {
-		if reason == "" {
-			reason = "用户拒绝执行该操作"
-		}
-		toolResult = fmt.Sprintf("操作被用户拒绝: %s", reason)
-		_ = s.allDb.Base.NocliInterruptRepo.UpdateStatus(
-			ctx,
-			interrupt.InterruptID,
-			pb.InterruptStatus_IS_REJECTED,
-			now,
-			userOpenid,
-			reason,
-		)
-	}
-
-	return openai.ChatCompletionMessage{
-		Role:       openai.ChatMessageRoleTool,
-		Content:    toolResult,
-		ToolCallID: interrupt.ToolCallID,
-	}, nil
-}
-
 // cancelPendingInterruptsOnNewCompletion 当用户发送新问题时，自动作废旧的待处理中断，并返回产生的取消消息
 func (s *ChatBiz) cancelPendingInterruptsOnNewCompletion(ctx context.Context, sessionID string) ([]openai.ChatCompletionMessage, error) {
 	pendingModels, err := s.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
