@@ -9,9 +9,10 @@ import (
 
 type DB struct {
 	*database.DB
-	AccountRepo      AccountRepo
-	NocliSessionRepo NocliSessionRepo
-	NocliMessageRepo NocliMessageRepo
+	AccountRepo        AccountRepo
+	NocliSessionRepo   NocliSessionRepo
+	NocliMessageRepo   NocliMessageRepo
+	NocliInterruptRepo NocliInterruptRepo
 }
 
 const dbName = "base"
@@ -24,9 +25,10 @@ func NewDB(c *conf.Config) *DB {
 	}
 
 	return &DB{
-		DB:               db,
-		AccountRepo:       AccountRepo{TableRepo: database.NewTableRepo[*AccountsModel](db)},
-		NocliSessionRepo:  NocliSessionRepo{TableRepo: database.NewTableRepo[*NocliSessionModel](db)},
-		NocliMessageRepo:  NocliMessageRepo{TableRepo: database.NewTableRepo[*NocliMessageModel](db)},
+		DB:                 db,
+		AccountRepo:        AccountRepo{TableRepo: database.NewTableRepo[*AccountsModel](db)},
+		NocliSessionRepo:   NocliSessionRepo{TableRepo: database.NewTableRepo[*NocliSessionModel](db)},
+		NocliMessageRepo:   NocliMessageRepo{TableRepo: database.NewTableRepo[*NocliMessageModel](db)},
+		NocliInterruptRepo: NocliInterruptRepo{TableRepo: database.NewTableRepo[*NocliInterruptModel](db)},
 	}
 }

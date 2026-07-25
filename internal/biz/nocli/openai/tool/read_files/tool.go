@@ -57,6 +57,10 @@ func NewTool(cfg *conf.Config) *Tool {
 	}
 }
 
+func (t *Tool) RequiresApproval() bool {
+	return false
+}
+
 func (t *Tool) Definition() openai.Tool {
 	parameters := map[string]interface{}{
 		"type": "object",

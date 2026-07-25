@@ -28,6 +28,10 @@ func NewTool(cfg *conf.Config) *Tool {
 	return &Tool{cfg: cfg}
 }
 
+func (t *Tool) RequiresApproval() bool {
+	return true
+}
+
 func (t *Tool) Definition() openai.Tool {
 	parameters := map[string]interface{}{
 		"type": "object",
@@ -49,7 +53,7 @@ func (t *Tool) Definition() openai.Tool {
 		Function: &openai.FunctionDefinition{
 			Name:        ToolName,
 			Description: "列出指定目录下的文件列表。支持递归，最多5层。所有路径都相对于配置的工作目录。",
-			Parameters: parameters,
+			Parameters:  parameters,
 		},
 	}
 }

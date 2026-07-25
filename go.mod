@@ -34,13 +34,14 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/text v0.37.0
-	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	gorm.io/driver/mysql v1.5.7
 	gorm.io/gorm v1.25.11
 	moul.io/zapgorm2 v1.3.0
 )
+
+require google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
 
 require (
 	dario.cat/mergo v1.0.0 // indirect

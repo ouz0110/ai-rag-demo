@@ -15,6 +15,46 @@ service NocliChat {
       body: "*"
     };
   }
+
+  // 恢复中断并继续对话
+  rpc Resume(ResumeRequest) returns (CompletionResponse) {
+    option (google.api.http) = {
+      post: "/nocli/v1/resume"
+      body: "*"
+    };
+  }
+}
+
+// 会话状态
+enum SessionStatus {
+  SESSION_STATUS_UNSPECIFIED = 0;
+  SESSION_STATUS_IDLE = 1;        // 空闲/已完成
+  SESSION_STATUS_RUNNING = 2;     // 处理中
+  SESSION_STATUS_INTERRUPTED = 3; // 已中断，等待人工决策
+}
+
+// 中断事件状态
+enum InterruptStatus {
+  INTERRUPT_STATUS_UNSPECIFIED = 0;
+  INTERRUPT_STATUS_PENDING = 1;  // 待审批
+  INTERRUPT_STATUS_APPROVED = 2; // 已批准
+  INTERRUPT_STATUS_REJECTED = 3; // 已拒绝
+  INTERRUPT_STATUS_EXPIRED = 4;  // 已超时/取消
+}
+
+// 恢复执行动作
+enum ResumeAction {
+  RESUME_ACTION_UNSPECIFIED = 0;
+  RESUME_ACTION_APPROVE = 1; // 批准执行
+  RESUME_ACTION_REJECT = 2;  // 拒绝执行
+}
+
+// 待确认的工具调用信息
+message PendingToolCall {
+  string interrupt_id = 1;
+  string tool_call_id = 2;
+  string tool_name = 3;
+  string arguments = 4;
 }
 
 // 补全请求
@@ -33,4 +73,23 @@ message CompletionResponse {
   string reply = 1;
   // 会话ID
   string session_id = 2;
+  // 会话当前状态
+  SessionStatus status = 3;
+  // 待确认的工具调用列表 (当 status 为 SESSION_STATUS_INTERRUPTED 时有效)
+  repeated PendingToolCall pending_tool_calls = 4;
 }
+
+// 恢复执行请求
+message ResumeRequest {
+  // 会话ID
+  string session_id = 1 [(validate.rules).string.min_len = 1];
+  // 中断事件ID
+  string interrupt_id = 2 [(validate.rules).string.min_len = 1];
+  // 恢复动作 (APPROVE/REJECT)
+  ResumeAction action = 3;
+  // 拒绝理由或用户意见
+  string reason = 4;
+  // 模型名称
+  string model = 5;
+}
+

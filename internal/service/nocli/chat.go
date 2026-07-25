@@ -23,3 +23,7 @@ func NewChatService(
 func (s *ChatService) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.CompletionResponse, error) {
 	return s.chatBiz.Completion(ctx, req)
 }
+
+func (s *ChatService) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.CompletionResponse, error) {
+	return s.chatBiz.Resume(ctx, req)
+}

@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS nocli_sessions (
     `session_id`   VARCHAR(128)  NOT NULL DEFAULT '' COMMENT '会话唯一标识',
     `openid`       VARCHAR(128)  NOT NULL DEFAULT '' COMMENT '用户openid',
     `name`         VARCHAR(128)  NOT NULL DEFAULT '' COMMENT '会话名称',
+    `status`       INT           NOT NULL DEFAULT 1 COMMENT '会话状态: 1-IDLE, 2-RUNNING, 3-INTERRUPTED',
     `created_at`   BIGINT        NOT NULL DEFAULT 0 COMMENT '创建时间（时间戳:秒）',
     `updated_at`   BIGINT        NOT NULL DEFAULT 0 COMMENT '更新时间（时间戳:秒）',
     PRIMARY KEY (id),

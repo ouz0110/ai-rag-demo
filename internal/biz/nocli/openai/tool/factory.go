@@ -14,6 +14,7 @@ import (
 type Tool interface {
 	Definition() openai.Tool
 	Run(ctx context.Context, argsJSON string) (string, error)
+	RequiresApproval() bool
 }
 
 type Registry struct {
@@ -23,7 +24,7 @@ type Registry struct {
 func NewRegistry(cfg *conf.Config) *Registry {
 	return &Registry{
 		tools: map[string]Tool{
-			list_file.ToolName:  list_file.NewTool(cfg),
+			list_file.ToolName: list_file.NewTool(cfg),
 			readfiles.ToolName: readfiles.NewTool(cfg),
 		},
 	}
@@ -43,4 +44,12 @@ func (r *Registry) Call(ctx context.Context, name, argsJSON string) (string, err
 		return "", fmt.Errorf("未知工具: %s", name)
 	}
 	return t.Run(ctx, argsJSON)
+}
+
+func (r *Registry) RequiresApproval(name string) bool {
+	t, ok := r.tools[name]
+	if !ok {
+		return false
+	}
+	return t.RequiresApproval()
 }
