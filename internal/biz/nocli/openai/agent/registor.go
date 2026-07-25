@@ -1,8 +1,12 @@
 package agent
 
 import (
-	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	"sync"
+
+	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
+	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
+	"ai-rag-demo/internal/biz/nocli/openai/tool"
+	"ai-rag-demo/internal/conf"
 )
 
 type Registry struct {
@@ -10,13 +14,34 @@ type Registry struct {
 	agents map[string]base.IAgent
 }
 
-func NewRegistry(baseAgent *base.BaseAgent) *Registry {
+// NewRegistry 统一进行多 Agent 的构造与动态 Tool 注入装配
+func NewRegistry(cfg *conf.Config, chatModel *chatmodel.ChatModel) *Registry {
 	r := &Registry{
 		agents: make(map[string]base.IAgent),
 	}
-	r.Register(NewMainAgent(baseAgent))
-	r.Register(NewFileAnalyzerAgent(baseAgent))
-	r.Register(NewRAGAgent(baseAgent))
+
+	// 1. 初始化全量底层物理工具仓库 (list_files, read_files, terminal)
+	baseTools := tool.NewRegistry(cfg)
+
+	// 2. 实例化各个 Agent (各 Agent 会在各自的构造函数内部，显式声明并挑选自己所需的物理工具)
+	fileAnalyzer := NewFileAnalyzerAgent(cfg, baseTools)
+	ragAgent := NewRAGAgent(cfg, baseTools)
+	mainAgent := NewMainAgent(cfg, baseTools)
+
+	// 4. 为 MainAgent 动态注入 SubAgent 工具 (Agent-as-a-Tool)
+	defaultAgentOpts := AgentToolOptions{
+		PassFullContextToSubAgent:  false, // 默认不透传父上下文给子
+		ReturnFullContextToParent: false, // 默认不返回子全部上下文给父
+		StreamSubAgentExecution:   true,  // 默认流式展示子 Agent 执行过程
+	}
+	mainAgent.RegisterSubAgentTool(fileAnalyzer, chatModel, defaultAgentOpts)
+	mainAgent.RegisterSubAgentTool(ragAgent, chatModel, defaultAgentOpts)
+
+	// 5. 将各 Agent 注册进 Agent 注册表
+	r.Register(mainAgent)
+	r.Register(fileAnalyzer)
+	r.Register(ragAgent)
+
 	return r
 }
 

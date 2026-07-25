@@ -32,6 +32,34 @@ func NewRegistry(cfg *conf.Config) *Registry {
 	}
 }
 
+func NewEmptyRegistry() *Registry {
+	return &Registry{
+		tools: make(map[string]Tool),
+	}
+}
+
+func (r *Registry) Clone() *Registry {
+	cloned := make(map[string]Tool, len(r.tools))
+	for k, v := range r.tools {
+		cloned[k] = v
+	}
+	return &Registry{tools: cloned}
+}
+
+func (r *Registry) Filter(names ...string) *Registry {
+	filtered := make(map[string]Tool)
+	nameSet := make(map[string]bool, len(names))
+	for _, n := range names {
+		nameSet[n] = true
+	}
+	for name, t := range r.tools {
+		if nameSet[name] {
+			filtered[name] = t
+		}
+	}
+	return &Registry{tools: filtered}
+}
+
 func (r *Registry) Register(t Tool) {
 	if r.tools == nil {
 		r.tools = make(map[string]Tool)

@@ -32,7 +32,7 @@ func (b *BaseAgent) SetName(name string) {
 	b.name = name
 }
 
-func NewBaseAgent(cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
+func NewBaseAgent(name string, cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
 	maxIter := 15
 	if cfg != nil && cfg.Source.Nocli != nil && cfg.Source.Nocli.MaxAgentIterations > 0 {
 		maxIter = cfg.Source.Nocli.MaxAgentIterations
@@ -45,13 +45,28 @@ func NewBaseAgent(cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
 		defaultModel = "deepseek-v3.2"
 	}
 
+	if toolRegistry == nil {
+		toolRegistry = tool.NewEmptyRegistry()
+	}
+
 	return &BaseAgent{
+		name:          name,
 		cfg:           cfg,
 		toolRegistry:  toolRegistry,
 		maxIterations: maxIter,
-		tools:         nil,
 		model:         defaultModel,
 	}
+}
+
+func (b *BaseAgent) RegisterTool(t tool.Tool) {
+	if b.toolRegistry == nil {
+		b.toolRegistry = tool.NewEmptyRegistry()
+	}
+	b.toolRegistry.Register(t)
+}
+
+func (b *BaseAgent) SetToolRegistry(r *tool.Registry) {
+	b.toolRegistry = r
 }
 
 func (b *BaseAgent) ToolRegistry() *tool.Registry {
@@ -59,11 +74,10 @@ func (b *BaseAgent) ToolRegistry() *tool.Registry {
 }
 
 func (b *BaseAgent) Tools() []openai.Tool {
-	return b.tools
-}
-
-func (b *BaseAgent) SetTools(tools []openai.Tool) {
-	b.tools = tools
+	if b.toolRegistry == nil {
+		return []openai.Tool{}
+	}
+	return b.toolRegistry.BuildTools()
 }
 
 func (b *BaseAgent) Model() string {

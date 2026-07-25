@@ -5,6 +5,9 @@ import (
 	"strings"
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
+	"ai-rag-demo/internal/biz/nocli/openai/tool"
+	read_files "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
+	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/skill"
 )
 
@@ -14,10 +17,12 @@ type RAGAgent struct {
 	*base.BaseAgent
 }
 
-func NewRAGAgent(b *base.BaseAgent) *RAGAgent {
-	if b != nil {
-		b.SetName(RAGAgentName)
-	}
+func NewRAGAgent(cfg *conf.Config, baseTools *tool.Registry) *RAGAgent {
+	// 📌 在此显式声明该 Agent 所需绑定的物理工具集 (如仅允许使用 read_files 读取文档)
+	tools := baseTools.Filter(
+		read_files.ToolName,
+	)
+	b := base.NewBaseAgent(RAGAgentName, cfg, tools)
 	return &RAGAgent{
 		BaseAgent: b,
 	}

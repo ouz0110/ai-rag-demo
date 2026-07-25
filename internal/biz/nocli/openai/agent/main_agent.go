@@ -5,6 +5,12 @@ import (
 	"strings"
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
+	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
+	"ai-rag-demo/internal/biz/nocli/openai/tool"
+	list_files "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
+	read_files "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
+	terminal "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
+	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/skill"
 )
 
@@ -14,13 +20,22 @@ type MainAgent struct {
 	*base.BaseAgent
 }
 
-func NewMainAgent(b *base.BaseAgent) *MainAgent {
-	if b != nil {
-		b.SetName(MainAgentName)
-	}
+func NewMainAgent(cfg *conf.Config, baseTools *tool.Registry) *MainAgent {
+	// 📌 在此显式声明 MainAgent 初始绑定的物理工具集
+	tools := baseTools.Filter(
+		list_files.ToolName,
+		read_files.ToolName,
+		terminal.ToolName,
+	)
+	b := base.NewBaseAgent(MainAgentName, cfg, tools)
 	return &MainAgent{
 		BaseAgent: b,
 	}
+}
+
+func (a *MainAgent) RegisterSubAgentTool(targetAgent base.IAgent, chatModel *chatmodel.ChatModel, opts AgentToolOptions) {
+	agentTool := NewAgentTool(targetAgent, chatModel, opts)
+	a.RegisterTool(agentTool)
 }
 
 func (a *MainAgent) Name() string {

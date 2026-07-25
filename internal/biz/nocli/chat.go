@@ -9,7 +9,6 @@ import (
 	"ai-rag-demo/internal/biz/nocli/openai/agent"
 	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
-	tool "ai-rag-demo/internal/biz/nocli/openai/tool"
 	"ai-rag-demo/internal/biz/nocli/session"
 	"ai-rag-demo/internal/cache"
 	"ai-rag-demo/internal/conf"
@@ -22,7 +21,6 @@ import (
 type ChatBiz struct {
 	cache           *cache.Cache
 	openaiChatModel *chatmodel.ChatModel
-	toolRegistry    *tool.Registry
 	agentRegistry   *agent.Registry
 	skillManager    *skill.Manager
 	sessionMgr      *session.SessionManager
@@ -45,30 +43,14 @@ func NewChatBiz(
 		log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
 	}
 
-	toolReg := tool.NewRegistry(cfg)
-	baseAgent := agentbase.NewBaseAgent(cfg, toolReg)
-	agentReg := agent.NewRegistry(baseAgent)
+	agentReg := agent.NewRegistry(cfg, openaiChatModel)
 	skillMgr := skill.NewManager(skillReg)
-
-	// 🎯 注册专有子 Agent 工具给 MainAgent 自由调度 (Agent-as-a-Tool 模式)
-	defaultAgentOpts := agent.AgentToolOptions{
-		PassFullContextToSubAgent:  false, // 默认不透传父上下文给子
-		ReturnFullContextToParent: false, // 默认不返回子全部上下文给父
-		StreamSubAgentExecution:   true,  // 默认流式展示子 Agent 执行过程
-	}
-	if fileAgent, ok := agentReg.Get(agent.FileAnalyzerAgentName); ok {
-		toolReg.Register(agent.NewAgentTool(fileAgent, openaiChatModel, defaultAgentOpts))
-	}
-	if ragAgent, ok := agentReg.Get(agent.RAGAgentName); ok {
-		toolReg.Register(agent.NewAgentTool(ragAgent, openaiChatModel, defaultAgentOpts))
-	}
 
 	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg, skillMgr)
 
 	return &ChatBiz{
 		cache:           cache,
 		openaiChatModel: openaiChatModel,
-		toolRegistry:    toolReg,
 		agentRegistry:   agentReg,
 		skillManager:    skillMgr,
 		sessionMgr:      sessionMgr,

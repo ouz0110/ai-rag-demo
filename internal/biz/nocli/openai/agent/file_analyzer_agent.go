@@ -5,6 +5,11 @@ import (
 	"strings"
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
+	"ai-rag-demo/internal/biz/nocli/openai/tool"
+	list_files "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
+	read_files "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
+	terminal "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
+	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/skill"
 
 	"github.com/sashabaranov/go-openai"
@@ -16,10 +21,14 @@ type FileAnalyzerAgent struct {
 	*base.BaseAgent
 }
 
-func NewFileAnalyzerAgent(b *base.BaseAgent) *FileAnalyzerAgent {
-	if b != nil {
-		b.SetName(FileAnalyzerAgentName)
-	}
+func NewFileAnalyzerAgent(cfg *conf.Config, baseTools *tool.Registry) *FileAnalyzerAgent {
+	// 📌 在此显式声明该 Agent 所需绑定的物理工具集
+	tools := baseTools.Filter(
+		list_files.ToolName,
+		read_files.ToolName,
+		terminal.ToolName,
+	)
+	b := base.NewBaseAgent(FileAnalyzerAgentName, cfg, tools)
 	return &FileAnalyzerAgent{
 		BaseAgent: b,
 	}
