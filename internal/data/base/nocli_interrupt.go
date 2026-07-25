@@ -126,3 +126,7 @@ func (s *NocliInterruptRepo) UpdateStatus(ctx context.Context, interruptID strin
 	}
 	return s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("interrupt_id=?", interruptID).Updates(updates).Error
 }
+
+func (s *NocliInterruptRepo) DeleteBySessionID(ctx context.Context, sessionID string) error {
+	return s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("session_id=?", sessionID).Delete(&NocliInterruptModel{}).Error
+}

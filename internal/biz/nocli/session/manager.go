@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -169,4 +170,164 @@ func (m *SessionManager) FinalizeSessionTurn(
 	}
 
 	return nil
+}
+
+// ListSessions 分页获取当前用户的历史会话列表
+func (m *SessionManager) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
+	_, user := common.UserFromContext(ctx)
+	openid := user.Openid
+	if openid == "" {
+		openid = "default_user"
+	}
+
+	page := req.GetPage()
+	pageSize := req.GetPageSize()
+
+	models, total, err := m.allDb.Base.NocliSessionRepo.ListByOpenid(ctx, openid, page, pageSize)
+	if err != nil {
+		return nil, fmt.Errorf("查询会话列表失败: %v", err)
+	}
+
+	sessions := make([]*pb.SessionInfo, 0, len(models))
+	for _, item := range models {
+		sessions = append(sessions, &pb.SessionInfo{
+			SessionId: item.SessionID,
+			Name:      item.Name,
+			Status:    item.Status,
+			CreatedAt: item.CreatedAt,
+			UpdatedAt: item.UpdatedAt,
+		})
+	}
+
+	return &pb.ListSessionsResponse{
+		Sessions: sessions,
+		Total:    int32(total),
+	}, nil
+}
+
+// DeleteSession 删除指定会话（包含级联删除关联的消息记录与中断记录，开启事务保障原子性）
+func (m *SessionManager) DeleteSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("session_id 不能为空")
+	}
+
+	return m.allDb.Base.InTransaction(ctx, func(txCtx context.Context) error {
+		if err := m.allDb.Base.NocliSessionRepo.DeleteBySessionID(txCtx, sessionID); err != nil {
+			return fmt.Errorf("删除会话主表失败: %v", err)
+		}
+		if err := m.allDb.Base.NocliMessageRepo.DeleteBySessionID(txCtx, sessionID); err != nil {
+			return fmt.Errorf("删除会话消息历史失败: %v", err)
+		}
+		if err := m.allDb.Base.NocliInterruptRepo.DeleteBySessionID(txCtx, sessionID); err != nil {
+			return fmt.Errorf("删除会话中断记录失败: %v", err)
+		}
+		return nil
+	})
+}
+
+// MapMessageModelToStreamChunk 将数据库持久化的 NocliMessageModel 映射为前端统一渲染的回放态 StreamChunk (方案 A)
+func MapMessageModelToStreamChunk(sessionID string, model dataBase.NocliMessageModel) *pb.StreamChunk {
+	var chatMsg openai.ChatCompletionMessage
+	if err := json.Unmarshal([]byte(model.Msg), &chatMsg); err != nil {
+		return nil
+	}
+
+	switch chatMsg.Role {
+	case openai.ChatMessageRoleUser:
+		return &pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_DONE,
+			Role:      chatMsg.Role,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_IDLE,
+			Text:      chatMsg.Content,
+		}
+
+	case openai.ChatMessageRoleAssistant:
+		if len(chatMsg.ToolCalls) > 0 {
+			tc := chatMsg.ToolCalls[0]
+			return &pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_TOOL_START,
+				Role:      chatMsg.Role,
+				SessionId: sessionID,
+				ToolInfo: &pb.StreamToolInfo{
+					ToolCallId: tc.ID,
+					ToolName:   tc.Function.Name,
+					Arguments:  tc.Function.Arguments,
+				},
+			}
+		}
+		return &pb.StreamChunk{
+			Event:         pb.StreamEventType_SET_DONE,
+			Role:          chatMsg.Role,
+			SessionId:     sessionID,
+			Status:        pb.SessionStatus_SS_IDLE,
+			Text:          chatMsg.Content,
+			ReasoningText: chatMsg.ReasoningContent,
+		}
+
+	case openai.ChatMessageRoleTool:
+		return &pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_TOOL_RESULT,
+			Role:      chatMsg.Role,
+			SessionId: sessionID,
+			ToolInfo: &pb.StreamToolInfo{
+				ToolCallId:    chatMsg.ToolCallID,
+				ResultPreview: chatMsg.Content,
+			},
+		}
+	}
+
+	return nil
+}
+
+// GetSessionHistory 获取指定会话的历史记录与挂起的中断信息 (方案 A: 返回用于前端统一渲染与回放的 StreamChunk 切片)
+func (m *SessionManager) GetSessionHistory(ctx context.Context, sessionID string) (*pb.GetSessionHistoryResponse, error) {
+	if sessionID == "" {
+		return nil, fmt.Errorf("session_id 不能为空")
+	}
+
+	// 1. 查询会话状态
+	sessionModel, found, err := m.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("获取会话信息失败: %v", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("会话 %s 不存在", sessionID)
+	}
+
+	// 2. 加载会话消息历史并映射为 StreamChunk 回放包
+	msgModels, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("获取会话消息历史失败: %v", err)
+	}
+
+	chunks := make([]*pb.StreamChunk, 0, len(msgModels))
+	for _, mItem := range msgModels {
+		if chunk := MapMessageModelToStreamChunk(sessionID, mItem); chunk != nil {
+			chunks = append(chunks, chunk)
+		}
+	}
+
+	// 3. 如果会话处于 SS_INTERRUPTED，加载待审批的中断调用
+	var pendingCalls []*pb.PendingToolCall
+	if sessionModel.Status == pb.SessionStatus_SS_INTERRUPTED {
+		interrupts, err := m.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
+		if err == nil {
+			for _, item := range interrupts {
+				pendingCalls = append(pendingCalls, &pb.PendingToolCall{
+					InterruptId: item.InterruptID,
+					ToolCallId:  item.ToolCallID,
+					ToolName:    item.ToolName,
+					Arguments:   item.Arguments,
+				})
+			}
+		}
+	}
+
+	return &pb.GetSessionHistoryResponse{
+		SessionId:        sessionID,
+		Status:           sessionModel.Status,
+		Chunks:           chunks,
+		PendingToolCalls: pendingCalls,
+	}, nil
 }

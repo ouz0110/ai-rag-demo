@@ -94,3 +94,29 @@ func (s *NocliSessionRepo) UpdateStatus(ctx context.Context, sessionID string, s
 func (s *NocliSessionRepo) UpdateUpdatedAt(ctx context.Context, sessionID string, updatedAt int64) error {
 	return s.GormDB(ctx).Model(&NocliSessionModel{}).Where("session_id=?", sessionID).Update("updated_at", updatedAt).Error
 }
+
+func (s *NocliSessionRepo) ListByOpenid(ctx context.Context, openid string, page, pageSize int32) ([]NocliSessionModel, int64, error) {
+	if page <= 0 {
+		page = 1
+	}
+	if pageSize <= 0 || pageSize > 100 {
+		pageSize = 20
+	}
+	offset := int((page - 1) * pageSize)
+
+	var total int64
+	db := s.GormDB(ctx).Model(&NocliSessionModel{}).Where("openid=?", openid)
+	if err := db.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var list []NocliSessionModel
+	if err := db.Order("updated_at DESC").Offset(offset).Limit(int(pageSize)).Find(&list).Error; err != nil {
+		return nil, 0, err
+	}
+	return list, total, nil
+}
+
+func (s *NocliSessionRepo) DeleteBySessionID(ctx context.Context, sessionID string) error {
+	return s.GormDB(ctx).Model(&NocliSessionModel{}).Where("session_id=?", sessionID).Delete(&NocliSessionModel{}).Error
+}

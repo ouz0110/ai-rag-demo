@@ -35,6 +35,21 @@ func (s *ChatService) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.St
 	return s.chatBiz.Resume(ctx, req)
 }
 
+// ListSessions 获取历史会话列表 RPC
+func (s *ChatService) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
+	return s.chatBiz.ListSessions(ctx, req)
+}
+
+// DeleteSession 删除指定会话 RPC
+func (s *ChatService) DeleteSession(ctx context.Context, req *pb.DeleteSessionRequest) (*pb.DeleteSessionResponse, error) {
+	return s.chatBiz.DeleteSession(ctx, req)
+}
+
+// GetSessionHistory 获取指定会话的历史记录与中断状态 RPC
+func (s *ChatService) GetSessionHistory(ctx context.Context, req *pb.GetSessionHistoryRequest) (*pb.GetSessionHistoryResponse, error) {
+	return s.chatBiz.GetSessionHistory(ctx, req)
+}
+
 // StreamCompletion 原生 gRPC 流式服务端接口
 func (s *ChatService) StreamCompletion(req *pb.CompletionRequest, stream pb.NocliChat_StreamCompletionServer) error {
 	ctx := stream.Context()

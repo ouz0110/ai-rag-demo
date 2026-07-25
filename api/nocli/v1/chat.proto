@@ -39,6 +39,28 @@ service NocliChat {
       body: "*"
     };
   }
+
+  // 获取历史会话列表
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse) {
+    option (google.api.http) = {
+      get: "/nocli/v1/sessions"
+    };
+  }
+
+  // 删除指定会话
+  rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse) {
+    option (google.api.http) = {
+      post: "/nocli/v1/session/delete"
+      body: "*"
+    };
+  }
+
+  // 获取指定会话的历史记录与中断状态
+  rpc GetSessionHistory(GetSessionHistoryRequest) returns (GetSessionHistoryResponse) {
+    option (google.api.http) = {
+      get: "/nocli/v1/session/history"
+    };
+  }
 }
 
 // 会话状态
@@ -126,6 +148,8 @@ message StreamChunk {
   repeated PendingToolCall pending_tool_calls = 8;
   // 错误信息 (event == SET_ERROR)
   StreamError error = 9;
+  // 角色类型 ("user", "assistant", "tool")
+  string role = 10;
 }
 
 // 补全请求
@@ -152,4 +176,60 @@ message ResumeRequest {
   string reason = 5;
   // 模型名称
   string model = 6;
+}
+
+// 会话概览信息
+message SessionInfo {
+  string session_id = 1;
+  string name = 2;
+  SessionStatus status = 3;
+  int64 created_at = 4;
+  int64 updated_at = 5;
+}
+
+// 会话列表请求
+message ListSessionsRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+}
+
+// 会话列表响应
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+  int32 total = 2;
+}
+
+// 删除会话请求
+message DeleteSessionRequest {
+  string session_id = 1 [(validate.rules).string.min_len = 1];
+}
+
+// 删除会话响应
+message DeleteSessionResponse {
+  bool success = 1;
+  string session_id = 2;
+}
+
+// 会话历史消息项
+message SessionMessage {
+  int64 id = 1;
+  string role = 2;
+  string content = 3;
+  string reasoning_content = 4;
+  string tool_calls_json = 5;
+  string tool_call_id = 6;
+  int64 created_at = 7;
+}
+
+// 获取会话历史请求
+message GetSessionHistoryRequest {
+  string session_id = 1 [(validate.rules).string.min_len = 1];
+}
+
+// 获取会话历史响应 (方案A: 返回用于前端统一渲染与回放的 StreamChunk 切片)
+message GetSessionHistoryResponse {
+  string session_id = 1;
+  SessionStatus status = 2;
+  repeated StreamChunk chunks = 3;
+  repeated PendingToolCall pending_tool_calls = 4;
 }

@@ -200,3 +200,30 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		Text:      loopRes.Reply,
 	}, nil
 }
+
+// ListSessions 会话列表接口
+func (s *ChatBiz) ListSessions(ctx context.Context, req *pb.ListSessionsRequest) (*pb.ListSessionsResponse, error) {
+	return s.sessionMgr.ListSessions(ctx, req)
+}
+
+// DeleteSession 删除会话接口
+func (s *ChatBiz) DeleteSession(ctx context.Context, req *pb.DeleteSessionRequest) (*pb.DeleteSessionResponse, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, fmt.Errorf("session_id 不能为空")
+	}
+	if err := s.sessionMgr.DeleteSession(ctx, req.SessionId); err != nil {
+		return nil, err
+	}
+	return &pb.DeleteSessionResponse{
+		Success:   true,
+		SessionId: req.SessionId,
+	}, nil
+}
+
+// GetSessionHistory 获取会话历史记录接口
+func (s *ChatBiz) GetSessionHistory(ctx context.Context, req *pb.GetSessionHistoryRequest) (*pb.GetSessionHistoryResponse, error) {
+	if req == nil || req.SessionId == "" {
+		return nil, fmt.Errorf("session_id 不能为空")
+	}
+	return s.sessionMgr.GetSessionHistory(ctx, req.SessionId)
+}

@@ -71,5 +71,5 @@ func (s *NocliMessageRepo) CreateBatch(ctx context.Context, ms []*NocliMessageMo
 }
 
 func (s *NocliMessageRepo) DeleteBySessionID(ctx context.Context, sessionID string) error {
-	return s.GormDB(ctx).Where("session_id=?", sessionID).Delete(&NocliMessageModel{}).Error
+	return s.GormDB(ctx).Model(&NocliMessageModel{}).Where("session_id=?", sessionID).Delete(&NocliMessageModel{}).Error
 }
