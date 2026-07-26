@@ -70,6 +70,26 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
 			}, nil
 		}
+		if res.HasReject {
+			log.Infow(ctx, "agent_loop_stopped_by_rejection", append(baseFields, "session_id", sessionID)...)
+			emitter(&pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_TEXT_DELTA,
+				SessionId: sessionID,
+				Status:    pb.SessionStatus_SS_IDLE,
+				Text:      "\n\n[已根据您的授权指示，终止后续工具调用与推导流程]",
+			})
+			emitter(&pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_DONE,
+				SessionId: sessionID,
+				Status:    pb.SessionStatus_SS_IDLE,
+			})
+			return &LoopResult{
+				AgentName: b.Name(),
+				Messages:  messages,
+				Reply:     "操作已被用户拒绝，终止后续流程",
+				Status:    pb.SessionStatus_SS_IDLE,
+			}, nil
+		}
 	}
 
 	maxIterations := b.MaxIterations()
@@ -145,6 +165,26 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
+			}, nil
+		}
+		if res.HasReject {
+			log.Infow(ctx, "agent_loop_stopped_by_rejection", append(baseFields, "session_id", sessionID)...)
+			emitter(&pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_TEXT_DELTA,
+				SessionId: sessionID,
+				Status:    pb.SessionStatus_SS_IDLE,
+				Text:      "\n\n[已根据您的授权指示，终止后续工具调用与推导流程]",
+			})
+			emitter(&pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_DONE,
+				SessionId: sessionID,
+				Status:    pb.SessionStatus_SS_IDLE,
+			})
+			return &LoopResult{
+				AgentName: b.Name(),
+				Messages:  messages,
+				Reply:     "操作已被用户拒绝，终止后续流程",
+				Status:    pb.SessionStatus_SS_IDLE,
 			}, nil
 		}
 	}

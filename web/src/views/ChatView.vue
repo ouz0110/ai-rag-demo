@@ -350,7 +350,7 @@ function handleApprovalRespond(payload: {
   max-width: 860px;
   width: 100%;
   margin: 0 auto;
-  padding: 0 1.25rem 0.5rem 1.25rem;
+  padding: 0.5rem 1.5rem 0.75rem 1.5rem;
   box-sizing: border-box;
   z-index: 25;
   flex-shrink: 0;

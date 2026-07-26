@@ -55,6 +55,7 @@ func (b *BaseAgent) ProcessToolCalls(
 				ToolCallID: toolID,
 			}
 			result.ExecutedMsgs = append(result.ExecutedMsgs, toolMsg)
+			result.HasReject = true
 			log.Debugw(ctx, "tool_execution_rejected", append(baseFields, "tool_id", toolID, "tool_name", toolName, "reason", reason)...)
 			continue
 		}

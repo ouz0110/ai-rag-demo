@@ -21,6 +21,7 @@ type LoopResult struct {
 
 type ProcessToolCallsResult struct {
 	HasInterrupt     bool
+	HasReject        bool
 	PendingInterrupt *dataBase.NocliInterruptModel
 	PendingToolCall  *pb.PendingToolCall
 	ExecutedMsgs     []openai.ChatCompletionMessage
