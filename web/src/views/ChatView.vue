@@ -177,23 +177,26 @@ onMounted(() => {
 function scrollToBottomImmediate() {
   nextTick(() => {
     const doScroll = () => {
-      if (scrollContainerRef.value) {
-        scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 1000;
-      }
       if (scrollAnchorRef.value) {
         scrollAnchorRef.value.scrollIntoView({ behavior: 'smooth', block: 'end' });
       }
+      if (scrollContainerRef.value) {
+        scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 2000;
+      }
     };
     doScroll();
-    setTimeout(doScroll, 80);
-    setTimeout(doScroll, 200);
+    setTimeout(doScroll, 50);
+    setTimeout(doScroll, 150);
+    setTimeout(doScroll, 350);
   });
 }
 
 function scrollToBottom() {
   nextTick(() => {
-    if (scrollContainerRef.value) {
-      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 1000;
+    if (scrollAnchorRef.value) {
+      scrollAnchorRef.value.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    } else if (scrollContainerRef.value) {
+      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 2000;
     }
   });
 }
@@ -330,7 +333,9 @@ function handleApprovalRespond(payload: {
 }
 
 .scroll-anchor {
-  height: 1rem;
+  height: 3.5rem;
+  min-height: 3.5rem;
+  flex-shrink: 0;
 }
 
 .interrupt-sticky-wrapper {
