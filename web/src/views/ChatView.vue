@@ -34,23 +34,17 @@
         <!-- 消息列表 -->
         <ChatMessage v-for="msg in chatStore.messages" :key="msg.id" :msg="msg" />
 
+        <!-- 流式中断与人工授权审批卡片 (无缝嵌入在最后一条消息后) -->
+        <InterruptCard
+          v-if="chatStore.pendingToolCalls && chatStore.pendingToolCalls.length > 0"
+          :pending-calls="chatStore.pendingToolCalls"
+          @respond="handleApprovalRespond"
+        />
+
         <!-- 占位平滑滚动锚点 -->
         <div ref="scrollAnchorRef" class="scroll-anchor"></div>
       </template>
     </div>
-
-    <!-- 高风险审批卡片 - 浮现固定区 (位于消息区下方、输入框上方，100% 显眼绝对置顶防遮挡) -->
-    <transition name="slide-up">
-      <div
-        v-if="chatStore.pendingToolCalls && chatStore.pendingToolCalls.length > 0"
-        class="interrupt-sticky-wrapper"
-      >
-        <InterruptCard
-          :pending-calls="chatStore.pendingToolCalls"
-          @respond="handleApprovalRespond"
-        />
-      </div>
-    </transition>
 
     <!-- 底部常驻输入框 -->
     <ChatInput />
@@ -182,14 +176,17 @@ onMounted(() => {
 
 function scrollToBottomImmediate() {
   nextTick(() => {
-    setTimeout(() => {
+    const doScroll = () => {
       if (scrollContainerRef.value) {
         scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 1000;
       }
       if (scrollAnchorRef.value) {
-        scrollAnchorRef.value.scrollIntoView({ behavior: 'auto' });
+        scrollAnchorRef.value.scrollIntoView({ behavior: 'smooth', block: 'end' });
       }
-    }, 60);
+    };
+    doScroll();
+    setTimeout(doScroll, 80);
+    setTimeout(doScroll, 200);
   });
 }
 
