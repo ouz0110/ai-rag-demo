@@ -18,20 +18,20 @@
           </div>
         </div>
 
-        <div v-for="call in pendingCalls" :key="call.tool_call_id" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] font-mono text-slate-400">
+        <div v-for="(call, idx) in pendingCalls" :key="getToolCallId(call) || idx" class="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-[11px] font-mono text-slate-400">
           <Terminal :size="12" class="text-amber-400" />
-          <span class="text-slate-200 font-semibold">{{ call.tool_name }}</span>
-          <span class="text-[10px] text-slate-500">({{ call.tool_call_id.slice(0, 10) }}...)</span>
+          <span class="text-slate-200 font-semibold">{{ getToolName(call) }}</span>
+          <span v-if="getToolCallId(call)" class="text-[10px] text-slate-500">({{ getToolCallId(call) }})</span>
         </div>
       </div>
 
       <!-- 2. Command Display Box -->
-      <div v-for="call in pendingCalls" :key="'cmd-' + call.tool_call_id" class="relative group/cmd">
+      <div v-for="(call, idx) in pendingCalls" :key="'cmd-' + (getToolCallId(call) || idx)" class="relative group/cmd">
         <div class="p-3 bg-[#050711] rounded-xl border border-slate-800/90 flex items-start gap-2 text-xs font-mono shadow-inner overflow-x-auto">
           <span class="text-amber-500 select-none font-bold shrink-0">$</span>
-          <code class="text-indigo-200 leading-relaxed font-mono whitespace-pre-wrap word-break-all flex-1">{{ formatArgs(call.arguments) }}</code>
+          <code class="text-indigo-200 leading-relaxed font-mono whitespace-pre-wrap word-break-all flex-1">{{ formatArgs(getArguments(call)) }}</code>
           <button
-            @click="copyCommand(formatArgs(call.arguments))"
+            @click="copyCommand(formatArgs(getArguments(call)))"
             class="shrink-0 p-1 rounded-md bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-slate-200 border border-slate-700/60 transition-all opacity-0 group-hover/cmd:opacity-100"
             :title="copiedCmd ? '已复制指令' : '复制指令'"
           >
@@ -136,7 +136,25 @@ const showRejectInput = ref(false);
 const rejectReason = ref('');
 const copiedCmd = ref(false);
 
+function getToolName(call: any): string {
+  return call?.tool_name || call?.toolName || call?.ToolName || 'terminal';
+}
+
+function getToolCallId(call: any): string {
+  const id = call?.tool_call_id || call?.toolCallId || call?.ToolCallId || '';
+  return id ? (id.length > 10 ? `${id.slice(0, 10)}...` : id) : '';
+}
+
+function getInterruptId(call: any): string {
+  return call?.interrupt_id || call?.interruptId || call?.InterruptId || '';
+}
+
+function getArguments(call: any): string {
+  return call?.arguments || call?.Arguments || '';
+}
+
 function formatArgs(str: string) {
+  if (!str) return '';
   try {
     const obj = JSON.parse(str);
     if (obj && typeof obj === 'object' && obj.command) {
@@ -158,7 +176,8 @@ function copyCommand(cmdText: string) {
 }
 
 function handleApprove() {
-  const interruptId = props.pendingCalls[0]?.interrupt_id || '';
+  const firstCall = props.pendingCalls[0];
+  const interruptId = getInterruptId(firstCall);
   emit('respond', {
     interruptId,
     action: ResumeAction.RA_APPROVE,
@@ -167,7 +186,8 @@ function handleApprove() {
 }
 
 function handleReject() {
-  const interruptId = props.pendingCalls[0]?.interrupt_id || '';
+  const firstCall = props.pendingCalls[0];
+  const interruptId = getInterruptId(firstCall);
   emit('respond', {
     interruptId,
     action: ResumeAction.RA_REJECT,
