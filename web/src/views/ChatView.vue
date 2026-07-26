@@ -177,14 +177,15 @@ onMounted(() => {
 function scrollToBottomImmediate() {
   nextTick(() => {
     const doScroll = () => {
-      if (scrollAnchorRef.value) {
-        scrollAnchorRef.value.scrollIntoView({ behavior: 'smooth', block: 'end' });
-      }
       if (scrollContainerRef.value) {
-        scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 2000;
+        scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 9999;
+      }
+      if (scrollAnchorRef.value) {
+        scrollAnchorRef.value.scrollIntoView({ behavior: 'auto', block: 'end' });
       }
     };
     doScroll();
+    requestAnimationFrame(doScroll);
     setTimeout(doScroll, 50);
     setTimeout(doScroll, 150);
     setTimeout(doScroll, 350);
@@ -193,10 +194,11 @@ function scrollToBottomImmediate() {
 
 function scrollToBottom() {
   nextTick(() => {
+    if (scrollContainerRef.value) {
+      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 9999;
+    }
     if (scrollAnchorRef.value) {
-      scrollAnchorRef.value.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    } else if (scrollContainerRef.value) {
-      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 2000;
+      scrollAnchorRef.value.scrollIntoView({ behavior: 'auto', block: 'end' });
     }
   });
 }
