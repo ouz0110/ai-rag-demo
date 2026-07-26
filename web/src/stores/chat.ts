@@ -20,6 +20,20 @@ export interface UIStreamTool {
   status: 'running' | 'completed';
 }
 
+export interface ChatSegmentText {
+  type: 'text';
+  id: string;
+  content: string;
+}
+
+export interface ChatSegmentTool {
+  type: 'tool';
+  id: string;
+  tools: UIStreamTool[];
+}
+
+export type ChatSegment = ChatSegmentText | ChatSegmentTool;
+
 export interface UIChatMessage {
   id: string;
   role: 'user' | 'assistant' | 'tool';
@@ -27,6 +41,7 @@ export interface UIChatMessage {
   reasoning_content: string;
   agent_name: string;
   tools: UIStreamTool[];
+  segments: ChatSegment[];
   created_at: number;
   isStreaming?: boolean;
   error?: string;
@@ -159,18 +174,131 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 从 chunks 重构前端消息结构 (实现 user -> assistant -> tool -> assistant 时间线交织)
+  // 辅助函数: 增量拼接 Chunk 到 assistant 消息的 segments 列表中
+  function appendChunkToMessage(msg: UIChatMessage, chunk: any) {
+    if (!msg.segments) {
+      msg.segments = [];
+    }
+
+    const role = chunk.role || 'assistant';
+    const text = chunk.text || chunk.Text;
+    const reasoning = chunk.reasoning_text || chunk.reasoningText;
+    const toolInfo = chunk.tool_info || chunk.toolInfo;
+
+    if (reasoning) {
+      msg.reasoning_content += reasoning;
+    }
+
+    // 1. 工具响应结果 (role === 'tool')
+    if (role === 'tool') {
+      if (toolInfo) {
+        const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
+        const tResult = toolInfo.result_preview || toolInfo.resultPreview || '';
+
+        // 更新 msg.tools
+        const existingGlobal = msg.tools.find((t) => t.tool_call_id === tId);
+        if (existingGlobal) {
+          if (tResult) existingGlobal.result_preview = tResult;
+          existingGlobal.status = 'completed';
+        }
+
+        // 反向查找 segment 中的工具并完成
+        for (let i = msg.segments.length - 1; i >= 0; i--) {
+          const seg = msg.segments[i];
+          if (seg.type === 'tool') {
+            const existingInSeg = seg.tools.find((t) => t.tool_call_id === tId);
+            if (existingInSeg) {
+              if (tResult) existingInSeg.result_preview = tResult;
+              existingInSeg.status = 'completed';
+              break;
+            }
+          }
+        }
+      }
+      return;
+    }
+
+    // 2. 文本 Delta
+    if (text) {
+      msg.content += text;
+      const lastSeg = msg.segments[msg.segments.length - 1];
+      if (lastSeg && lastSeg.type === 'text') {
+        lastSeg.content += text;
+      } else {
+        msg.segments.push({
+          type: 'text',
+          id: 'text-' + Date.now() + Math.random(),
+          content: text,
+        });
+      }
+    }
+
+    // 3. 工具启动 (SET_TOOL_START)
+    if (toolInfo) {
+      const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
+      const tName = toolInfo.tool_name || toolInfo.toolName || '';
+      const tArgs = toolInfo.arguments || '';
+      const tResult = toolInfo.result_preview || toolInfo.resultPreview;
+
+      // 维护 msg.tools
+      const existingGlobal = msg.tools.find((x) => x.tool_call_id === tId);
+      if (existingGlobal) {
+        if (tResult) existingGlobal.result_preview = tResult;
+        existingGlobal.status = 'completed';
+      } else {
+        msg.tools.push({
+          tool_call_id: tId,
+          tool_name: tName,
+          arguments: tArgs,
+          result_preview: tResult,
+          status: tResult ? 'completed' : 'running',
+        });
+      }
+
+      // 维护 msg.segments 中的 tool segment
+      const lastSeg = msg.segments[msg.segments.length - 1];
+      if (lastSeg && lastSeg.type === 'tool') {
+        const existingInSeg = lastSeg.tools.find((x) => x.tool_call_id === tId);
+        if (existingInSeg) {
+          if (tResult) existingInSeg.result_preview = tResult;
+          existingInSeg.status = 'completed';
+        } else {
+          lastSeg.tools.push({
+            tool_call_id: tId,
+            tool_name: tName,
+            arguments: tArgs,
+            result_preview: tResult,
+            status: tResult ? 'completed' : 'running',
+          });
+        }
+      } else {
+        msg.segments.push({
+          type: 'tool',
+          id: 'tool-' + Date.now() + Math.random(),
+          tools: [
+            {
+              tool_call_id: tId,
+              tool_name: tName,
+              arguments: tArgs,
+              result_preview: tResult,
+              status: tResult ? 'completed' : 'running',
+            },
+          ],
+        });
+      }
+    }
+  }
+
+  // 从 chunks 重构前端消息结构 (历史记录与流式回放保持统一的大块+小段结构)
   function reconstructMessagesFromChunks(chunks: any[]): UIChatMessage[] {
     const list: UIChatMessage[] = [];
     let currentAssistantMsg: UIChatMessage | null = null;
-    let currentAssistantToolsCompleted = false;
 
     for (const chunk of chunks) {
       const role = chunk.role || 'assistant';
 
       if (role === 'user') {
         currentAssistantMsg = null;
-        currentAssistantToolsCompleted = false;
         list.push({
           id: 'user-' + Date.now() + Math.random(),
           role: 'user',
@@ -178,27 +306,11 @@ export const useChatStore = defineStore('chat', () => {
           reasoning_content: '',
           agent_name: '',
           tools: [],
+          segments: [],
           created_at: Date.now(),
         });
-      } else if (role === 'tool') {
-        const toolInfo = chunk.tool_info || chunk.toolInfo;
-        if (toolInfo && currentAssistantMsg) {
-          const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
-          const tResult = toolInfo.result_preview || toolInfo.resultPreview || '';
-          const existingTool = currentAssistantMsg.tools.find((x) => x.tool_call_id === tId);
-          if (existingTool) {
-            existingTool.result_preview = tResult;
-            existingTool.status = 'completed';
-          }
-        }
-        currentAssistantToolsCompleted = true;
       } else {
-        const text = chunk.text || chunk.Text;
-        const reasoning = chunk.reasoning_text || chunk.reasoningText;
-        const toolInfo = chunk.tool_info || chunk.toolInfo;
-
-        // 如果前一个 assistant 步骤的工具执行完毕，且收到了新一轮文本/思考，开启新的 assistant 消息卡片
-        if (!currentAssistantMsg || (currentAssistantToolsCompleted && (text || reasoning))) {
+        if (!currentAssistantMsg) {
           currentAssistantMsg = {
             id: 'assistant-' + Date.now() + Math.random(),
             role: 'assistant',
@@ -206,10 +318,10 @@ export const useChatStore = defineStore('chat', () => {
             reasoning_content: '',
             agent_name: chunk.agent_name || chunk.agentName || 'main',
             tools: [],
+            segments: [],
             created_at: Date.now(),
           };
           list.push(currentAssistantMsg);
-          currentAssistantToolsCompleted = false;
         }
 
         const agentName = chunk.agent_name || chunk.agentName;
@@ -217,36 +329,7 @@ export const useChatStore = defineStore('chat', () => {
           currentAssistantMsg.agent_name = agentName;
         }
 
-        if (reasoning) {
-          currentAssistantMsg.reasoning_content += reasoning;
-        }
-
-        if (text) {
-          currentAssistantMsg.content += text;
-        }
-
-        if (toolInfo) {
-          const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
-          const tName = toolInfo.tool_name || toolInfo.toolName || '';
-          const tArgs = toolInfo.arguments || '';
-          const tResult = toolInfo.result_preview || toolInfo.resultPreview;
-
-          const existingTool = currentAssistantMsg.tools.find(
-            (item) => item.tool_call_id === tId
-          );
-          if (existingTool) {
-            if (tResult) existingTool.result_preview = tResult;
-            existingTool.status = 'completed';
-          } else {
-            currentAssistantMsg.tools.push({
-              tool_call_id: tId,
-              tool_name: tName,
-              arguments: tArgs,
-              result_preview: tResult,
-              status: tResult ? 'completed' : 'running',
-            });
-          }
-        }
+        appendChunkToMessage(currentAssistantMsg, chunk);
       }
     }
 
@@ -265,6 +348,7 @@ export const useChatStore = defineStore('chat', () => {
       reasoning_content: '',
       agent_name: '',
       tools: [],
+      segments: [],
       created_at: Date.now(),
     };
     messages.value.push(userMsg);
@@ -345,8 +429,6 @@ export const useChatStore = defineStore('chat', () => {
     });
   }
 
-  let activeToolsCompleted = false;
-
   // 统一处理 SSE Chunk 核心逻辑
   function handleStreamChunk(chunk: any) {
     const sId = chunk.session_id || chunk.sessionId;
@@ -366,42 +448,9 @@ export const useChatStore = defineStore('chat', () => {
       sessionStatus.value = chunk.status;
     }
 
-    const chunkRole = chunk.role || 'assistant';
-
-    // 1. 工具响应结果
-    if (chunkRole === 'tool') {
-      const toolInfo = chunk.tool_info || chunk.toolInfo;
-      if (toolInfo) {
-        const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
-        const tResult = toolInfo.result_preview || toolInfo.resultPreview;
-
-        for (let i = messages.value.length - 1; i >= 0; i--) {
-          const m = messages.value[i];
-          if (m.role === 'assistant') {
-            const existing = m.tools.find((t) => t.tool_call_id === tId);
-            if (existing) {
-              if (tResult) existing.result_preview = tResult;
-              existing.status = 'completed';
-              break;
-            }
-          }
-        }
-      }
-      activeToolsCompleted = true;
-      return;
-    }
-
-    // 2. assistant 消息处理
-    const text = chunk.text || chunk.Text;
-    const reasoning = chunk.reasoning_text || chunk.reasoningText;
-    const toolInfo = chunk.tool_info || chunk.toolInfo;
-
     let targetMsg = messages.value[messages.value.length - 1];
 
-    if (!targetMsg || targetMsg.role !== 'assistant' || (activeToolsCompleted && (text || reasoning))) {
-      if (targetMsg && targetMsg.role === 'assistant') {
-        targetMsg.isStreaming = false;
-      }
+    if (!targetMsg || targetMsg.role !== 'assistant') {
       targetMsg = {
         id: 'assistant-' + Date.now() + Math.random(),
         role: 'assistant',
@@ -409,11 +458,11 @@ export const useChatStore = defineStore('chat', () => {
         reasoning_content: '',
         agent_name: chunk.agent_name || chunk.agentName || 'main',
         tools: [],
+        segments: [],
         created_at: Date.now(),
         isStreaming: true,
       };
       messages.value.push(targetMsg);
-      activeToolsCompleted = false;
     }
 
     const agentName = chunk.agent_name || chunk.agentName;
@@ -421,34 +470,7 @@ export const useChatStore = defineStore('chat', () => {
       targetMsg.agent_name = agentName;
     }
 
-    if (reasoning) {
-      targetMsg.reasoning_content += reasoning;
-    }
-
-    if (text) {
-      targetMsg.content += text;
-    }
-
-    if (toolInfo) {
-      const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
-      const tName = toolInfo.tool_name || toolInfo.toolName || '';
-      const tArgs = toolInfo.arguments || '';
-      const tResult = toolInfo.result_preview || toolInfo.resultPreview;
-
-      const existing = targetMsg.tools.find((x) => x.tool_call_id === tId);
-      if (existing) {
-        if (tResult) existing.result_preview = tResult;
-        existing.status = 'completed';
-      } else {
-        targetMsg.tools.push({
-          tool_call_id: tId,
-          tool_name: tName,
-          arguments: tArgs,
-          result_preview: tResult,
-          status: tResult ? 'completed' : 'running',
-        });
-      }
-    }
+    appendChunkToMessage(targetMsg, chunk);
 
     // 中断事件 / 待确认工具调用
     const pending = chunk.pending_tool_calls || chunk.pendingToolCalls;

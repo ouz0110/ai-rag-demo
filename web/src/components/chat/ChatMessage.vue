@@ -31,42 +31,85 @@
         <CoTBox
           v-if="msg.role === 'assistant' && msg.reasoning_content"
           :reasoning-text="msg.reasoning_content"
-          :is-streaming="msg.isStreaming && !msg.content"
+          :is-streaming="msg.isStreaming && (!msg.segments || msg.segments.length === 0)"
         />
 
-        <!-- 2. 用户/助手文本输出 -->
+        <!-- 2. 用户消息 (普通文本直接渲染) -->
         <div
-          v-if="msg.content"
+          v-if="msg.role === 'user'"
           class="markdown-body"
-          :class="{ 'cursor-blink': msg.isStreaming }"
-          v-html="renderedContent"
+          v-html="renderMarkdown(msg.content)"
         ></div>
 
-        <!-- 3. 助手专属: 自动工具调用组合卡片 (位于文本下方，逻辑更连贯) -->
-        <ToolCallBox
-          v-if="msg.role === 'assistant' && msg.tools && msg.tools.length > 0"
-          :tools="msg.tools"
-        />
+        <!-- 3. 助手消息 (按 segments 顺序交织渲染小块: 文本 ➔ 工具 ➔ 文本 ➔ 工具) -->
+        <div v-else class="segments-container flex flex-col gap-2">
+          <!-- 回退兼容: 如果 segments 为空，但 content 存在 -->
+          <div
+            v-if="(!msg.segments || msg.segments.length === 0) && msg.content"
+            class="markdown-body"
+            :class="{ 'cursor-blink': msg.isStreaming }"
+            v-html="renderMarkdown(msg.content)"
+          ></div>
+
+          <!-- 按顺序动态渲染 segments 小块 -->
+          <div
+            v-for="(seg, idx) in msg.segments"
+            :key="seg.id || idx"
+            class="segment-item"
+          >
+            <!-- 文本小块 (独立区域 + 悬浮专属复制按钮) -->
+            <div
+              v-if="seg.type === 'text' && seg.content"
+              class="text-segment-block group/segment relative"
+            >
+              <div
+                class="markdown-body"
+                :class="{ 'cursor-blink': msg.isStreaming && idx === msg.segments.length - 1 }"
+                v-html="renderMarkdown(seg.content)"
+              ></div>
+
+              <!-- 每个文本小块的悬浮操作按钮 -->
+              <div class="segment-actions-bar">
+                <button
+                  @click.stop="copySegmentText(seg.id, seg.content)"
+                  class="action-btn"
+                  :title="copiedSegmentId === seg.id ? '已复制小块内容' : '复制此小块'"
+                >
+                  <Check v-if="copiedSegmentId === seg.id" :size="12" class="text-emerald-400" />
+                  <Copy v-else :size="12" />
+                  <span>{{ copiedSegmentId === seg.id ? '已复制' : '复制小块' }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 工具小块 (放置在该工具调用的对应位置) -->
+            <ToolCallBox
+              v-else-if="seg.type === 'tool' && seg.tools && seg.tools.length > 0"
+              :tools="seg.tools"
+              class="my-1.5"
+            />
+          </div>
+        </div>
 
         <!-- 4. 报错提醒 -->
-        <div v-if="msg.error" class="error-box">
+        <div v-if="msg.error" class="error-box mt-2">
           <AlertCircle :size="15" class="error-icon" />
           <span>{{ msg.error }}</span>
         </div>
       </div>
 
-      <!-- 5. 悬浮操作栏 (主流 AI Chat 模式: 悬浮 Message 时才展示复制按钮) -->
+      <!-- 5. 悬浮操作栏 (整条消息大块复制按钮) -->
       <div class="hover-actions-bar" v-if="msg.content || msg.reasoning_content">
-        <!-- 复制正文按钮 -->
+        <!-- 复制整条大块正文按钮 -->
         <button
           v-if="msg.content"
           @click="copyText"
           class="action-btn"
-          :title="copied ? '已复制正文' : '复制正文'"
+          :title="copied ? '已复制全部正文' : '复制全部正文'"
         >
           <Check v-if="copied" :size="13" class="text-emerald-400" />
           <Copy v-else :size="13" />
-          <span>{{ copied ? '已复制' : '复制' }}</span>
+          <span>{{ copied ? '已复制全部' : '复制全部' }}</span>
         </button>
 
         <!-- 复制 CoT 思考过程按钮 -->
@@ -102,6 +145,7 @@ const props = defineProps<{
 const userStore = useUserStore();
 const copied = ref(false);
 const copiedReasoning = ref(false);
+const copiedSegmentId = ref<string>('');
 
 const userAvatarText = computed(() => {
   const name = userStore.userInfo?.nickname || userStore.userInfo?.account || 'U';
@@ -133,10 +177,20 @@ marked.use({
   },
 });
 
-const renderedContent = computed(() => {
-  if (!props.msg.content) return '';
-  return marked.parse(props.msg.content) as string;
-});
+function renderMarkdown(content: string) {
+  if (!content) return '';
+  return marked.parse(content) as string;
+}
+
+// 复制某个小块文本
+function copySegmentText(segmentId: string, content: string) {
+  if (!content) return;
+  navigator.clipboard.writeText(content);
+  copiedSegmentId.value = segmentId;
+  setTimeout(() => {
+    copiedSegmentId.value = '';
+  }, 2000);
+}
 
 // 复制消息正文
 function copyText() {
@@ -338,10 +392,23 @@ function handleCardClick(e: MouseEvent) {
   transition: all 0.2s ease;
 }
 
-.action-btn:hover {
-  background: rgba(99, 102, 241, 0.15);
-  border-color: rgba(99, 102, 241, 0.3);
-  color: #a5b4fc;
+.text-segment-block {
+  position: relative;
+}
+
+.segment-actions-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+  margin-bottom: 4px;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.text-segment-block:hover .segment-actions-bar {
+  opacity: 1;
+  visibility: visible;
 }
 </style>
 
