@@ -59,7 +59,16 @@ func (b *BaseAgent) ProcessToolCalls(
 			continue
 		}
 
-		if b.toolRegistry.RequiresApproval(toolName, tc.Function.Arguments) && !approvedTools[toolName] && !approvedTools[toolID] {
+		requiresApproval := b.toolRegistry.RequiresApproval(toolName, tc.Function.Arguments)
+		isApproved := approvedTools[toolID] || approvedTools[toolName]
+
+		// 🛡️ 动态安全防护: terminal 工具如果是危险/修改性指令 (RequiresApproval 为 true),
+		// 必须仅凭单次审批 (approvedTools[toolID]) 放行，不能直接套用工具级别的全局 session 放行，防止误穿透高危命令！
+		if toolName == "terminal" && requiresApproval && !approvedTools[toolID] {
+			isApproved = false
+		}
+
+		if requiresApproval && !isApproved {
 			intRes := b.BuildInterruptResult(ctx, sessionID, toolID, toolName, tc.Function.Arguments, baseFields)
 			intRes.ExecutedMsgs = result.ExecutedMsgs
 			result = intRes
@@ -83,11 +92,17 @@ func (b *BaseAgent) ProcessToolCalls(
 		toolResult, err := b.toolRegistry.Call(ctx, toolName, tc.Function.Arguments)
 		if err != nil {
 			var interruptErr openaierr.InterruptErr
-			if errors.As(err, &interruptErr) && !approvedTools[toolName] && !approvedTools[toolID] {
-				intRes := b.BuildInterruptResult(ctx, sessionID, toolID, toolName, tc.Function.Arguments, baseFields)
-				intRes.ExecutedMsgs = result.ExecutedMsgs
-				result = intRes
-				break
+			if errors.As(err, &interruptErr) {
+				isAppr := approvedTools[toolID] || approvedTools[toolName]
+				if toolName == "terminal" && !approvedTools[toolID] {
+					isAppr = false
+				}
+				if !isAppr {
+					intRes := b.BuildInterruptResult(ctx, sessionID, toolID, toolName, tc.Function.Arguments, baseFields)
+					intRes.ExecutedMsgs = result.ExecutedMsgs
+					result = intRes
+					break
+				}
 			}
 			toolResult = fmt.Sprintf("工具执行失败: %v", err)
 			log.Debugw(ctx, "tool_result_error", append(baseFields, "tool_id", toolID, "tool_name", toolName, "error", err)...)
