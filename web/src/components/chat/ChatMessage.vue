@@ -397,13 +397,28 @@ function handleCardClick(e: MouseEvent) {
 }
 
 .segment-actions-bar {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 4px;
-  margin-bottom: 4px;
+  position: absolute;
+  top: 4px;
+  right: 6px;
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.2s ease, visibility 0.2s ease;
+  z-index: 10;
+}
+
+.segment-actions-bar .action-btn {
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.segment-actions-bar .action-btn:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
 }
 
 .text-segment-block:hover .segment-actions-bar {
