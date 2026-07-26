@@ -34,9 +34,9 @@
         <!-- 消息列表 -->
         <ChatMessage v-for="msg in chatStore.messages" :key="msg.id" :msg="msg" />
 
-        <!-- 流式中断与人工授权审批卡片 (处于 SS_INTERRUPTED 或 Pending 状态) -->
+        <!-- 流式中断与人工授权审批卡片 (处于 Pending 挂起状态) -->
         <InterruptCard
-          v-if="chatStore.sessionStatus === SessionStatus.SS_INTERRUPTED && chatStore.pendingToolCalls.length > 0"
+          v-if="chatStore.pendingToolCalls && chatStore.pendingToolCalls.length > 0"
           :pending-calls="chatStore.pendingToolCalls"
           @respond="handleApprovalRespond"
         />
@@ -99,7 +99,7 @@ const statusColorClass = computed(() => {
   }
 });
 
-// 监听滚动区顶部触顶事件 (懒加载历史消息)
+// 监听滚动区顶部触顶事件 (向上懒加载更早的历史消息)
 async function handleScroll() {
   const container = scrollContainerRef.value;
   if (!container) return;
@@ -113,7 +113,7 @@ async function handleScroll() {
     const previousScrollHeight = container.scrollHeight;
     await chatStore.loadMoreHistory();
 
-    // 维持原有滚动位置，避免视觉抖动或跳动
+    // 维持原有相对滚动位置，避免跳动
     nextTick(() => {
       if (scrollContainerRef.value) {
         const newScrollHeight = scrollContainerRef.value.scrollHeight;
@@ -136,7 +136,17 @@ watch(
   { immediate: true }
 );
 
-// 监听消息增加，自动滚动到底部
+// 监听历史记录首屏加载完成，立刻强制对齐定位到对话最底部
+watch(
+  () => chatStore.isHistoryLoading,
+  (loading) => {
+    if (!loading) {
+      scrollToBottomImmediate();
+    }
+  }
+);
+
+// 监听新消息产生，滚动到底部
 watch(
   () => chatStore.messages,
   () => {
@@ -151,8 +161,15 @@ onMounted(() => {
     return;
   }
   chatStore.selectSession(sessionId.value);
-  scrollToBottom();
 });
+
+function scrollToBottomImmediate() {
+  nextTick(() => {
+    if (scrollContainerRef.value) {
+      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight;
+    }
+  });
+}
 
 function scrollToBottom() {
   nextTick(() => {

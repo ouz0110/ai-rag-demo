@@ -335,20 +335,19 @@ func (m *SessionManager) GetSessionHistory(ctx context.Context, req *pb.GetSessi
 
 	hasMore := int64((pageNum-1)*pageSize+int32(len(msgModels))) < total
 
-	// 3. 如果会话处于 SS_INTERRUPTED，加载待审批的中断调用
+	// 3. 检查是否有挂起的中断调用并加载
 	var pendingCalls []*pb.PendingToolCall
-	if sessionModel.Status == pb.SessionStatus_SS_INTERRUPTED {
-		interrupts, err := m.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
-		if err == nil {
-			for _, item := range interrupts {
-				pendingCalls = append(pendingCalls, &pb.PendingToolCall{
-					InterruptId: item.InterruptID,
-					ToolCallId:  item.ToolCallID,
-					ToolName:    item.ToolName,
-					Arguments:   item.Arguments,
-				})
-			}
+	interrupts, err := m.allDb.Base.NocliInterruptRepo.GetPendingBySessionID(ctx, sessionID)
+	if err == nil && len(interrupts) > 0 {
+		for _, item := range interrupts {
+			pendingCalls = append(pendingCalls, &pb.PendingToolCall{
+				InterruptId: item.InterruptID,
+				ToolCallId:  item.ToolCallID,
+				ToolName:    item.ToolName,
+				Arguments:   item.Arguments,
+			})
 		}
+		sessionModel.Status = pb.SessionStatus_SS_INTERRUPTED
 	}
 
 	return &pb.GetSessionHistoryResponse{

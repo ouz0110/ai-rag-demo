@@ -123,13 +123,16 @@ export const useChatStore = defineStore('chat', () => {
 
       hasMoreHistory.value = !!(res?.has_more ?? res?.hasMore);
 
-      const rawPending = res?.pending_tool_calls || res?.pendingToolCalls || [];
+      const rawPending = res?.pending_tool_calls || res?.pendingToolCalls || res?.PendingToolCalls || [];
       pendingToolCalls.value = rawPending.map((p: any) => ({
-        interrupt_id: p.interrupt_id || p.interruptId || '',
-        tool_call_id: p.tool_call_id || p.toolCallId || '',
-        tool_name: p.tool_name || p.toolName || '',
-        arguments: p.arguments || '',
+        interrupt_id: p.interrupt_id || p.interruptId || p.InterruptId || '',
+        tool_call_id: p.tool_call_id || p.toolCallId || p.ToolCallId || '',
+        tool_name: p.tool_name || p.toolName || p.ToolName || '',
+        arguments: p.arguments || p.Arguments || '',
       }));
+      if (pendingToolCalls.value.length > 0) {
+        sessionStatus.value = SessionStatus.SS_INTERRUPTED;
+      }
 
       // 回放/解析后端返回的 chunks 重构历史 UI
       const chunks = res?.chunks || res?.Chunks || [];
