@@ -146,7 +146,18 @@ watch(
   }
 );
 
-// 监听新消息产生，滚动到底部
+// 监听中断审批列表 (pendingToolCalls) 产生，立刻向上拉起滚动条完整展示审批卡片
+watch(
+  () => chatStore.pendingToolCalls,
+  (pending) => {
+    if (pending && pending.length > 0) {
+      scrollToBottomImmediate();
+    }
+  },
+  { deep: true, immediate: true }
+);
+
+// 监听新消息产生/增量更新，平滑滚动到底部
 watch(
   () => chatStore.messages,
   () => {
@@ -165,16 +176,21 @@ onMounted(() => {
 
 function scrollToBottomImmediate() {
   nextTick(() => {
-    if (scrollContainerRef.value) {
-      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight;
-    }
+    setTimeout(() => {
+      if (scrollContainerRef.value) {
+        scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 1000;
+      }
+      if (scrollAnchorRef.value) {
+        scrollAnchorRef.value.scrollIntoView({ behavior: 'auto' });
+      }
+    }, 60);
   });
 }
 
 function scrollToBottom() {
   nextTick(() => {
-    if (scrollAnchorRef.value) {
-      scrollAnchorRef.value.scrollIntoView({ behavior: 'smooth' });
+    if (scrollContainerRef.value) {
+      scrollContainerRef.value.scrollTop = scrollContainerRef.value.scrollHeight + 1000;
     }
   });
 }
