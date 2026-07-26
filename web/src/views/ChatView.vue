@@ -34,17 +34,23 @@
         <!-- 消息列表 -->
         <ChatMessage v-for="msg in chatStore.messages" :key="msg.id" :msg="msg" />
 
-        <!-- 流式中断与人工授权审批卡片 (处于 Pending 挂起状态) -->
-        <InterruptCard
-          v-if="chatStore.pendingToolCalls && chatStore.pendingToolCalls.length > 0"
-          :pending-calls="chatStore.pendingToolCalls"
-          @respond="handleApprovalRespond"
-        />
-
         <!-- 占位平滑滚动锚点 -->
         <div ref="scrollAnchorRef" class="scroll-anchor"></div>
       </template>
     </div>
+
+    <!-- 高风险审批卡片 - 浮现固定区 (位于消息区下方、输入框上方，100% 显眼绝对置顶防遮挡) -->
+    <transition name="slide-up">
+      <div
+        v-if="chatStore.pendingToolCalls && chatStore.pendingToolCalls.length > 0"
+        class="interrupt-sticky-wrapper"
+      >
+        <InterruptCard
+          :pending-calls="chatStore.pendingToolCalls"
+          @respond="handleApprovalRespond"
+        />
+      </div>
+    </transition>
 
     <!-- 底部常驻输入框 -->
     <ChatInput />
@@ -328,6 +334,27 @@ function handleApprovalRespond(payload: {
 
 .scroll-anchor {
   height: 1rem;
+}
+
+.interrupt-sticky-wrapper {
+  max-width: 900px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 1.25rem 0.5rem 1.25rem;
+  box-sizing: border-box;
+  z-index: 25;
+  flex-shrink: 0;
+}
+
+.slide-up-enter-active,
+.slide-up-leave-active {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.slide-up-enter-from,
+.slide-up-leave-to {
+  opacity: 0;
+  transform: translateY(20px);
 }
 </style>
 
