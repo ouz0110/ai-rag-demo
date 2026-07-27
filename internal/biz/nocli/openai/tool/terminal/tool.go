@@ -36,7 +36,18 @@ func (t *Tool) RequiresApproval(argsJSON string) bool {
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return true
 	}
-	return IsDangerousCommand(args.Command)
+
+	workDir := t.cfg.Source.Nocli.WorkDir
+	if workDir == "" {
+		workDir = "."
+	}
+
+	// 1. 任何企图逃逸工作目录的 cwd 或 command 均属于风险/越界操作，强制触发人工审批
+	if HasPathEscape(workDir, args.Cwd) || HasPathEscape(workDir, args.Command) {
+		return true
+	}
+
+	return IsDangerousCommand(workDir, args.Command)
 }
 
 func (t *Tool) Definition() openai.Tool {
@@ -45,11 +56,11 @@ func (t *Tool) Definition() openai.Tool {
 		"properties": map[string]interface{}{
 			"command": map[string]interface{}{
 				"type":        "string",
-				"description": "要在终端执行的 Shell 命令或脚本调用指令。例如: 'curl -sL https://example.com' 或 'git status'。",
+				"description": "要在终端执行的 Shell 命令或脚本调用指令。注意：所有命令及其操作的目标路径必须限制在当前工作目录内部，严禁使用 '..' 或根绝对路径试图跨越逃逸工作目录。",
 			},
 			"cwd": map[string]interface{}{
 				"type":        "string",
-				"description": "执行命令的工作目录，相对于配置的工作目录。留空表示当前工作目录。",
+				"description": "执行命令的工作目录，相对于配置的工作目录。留空表示当前工作目录。严禁使用 '..' 或绝对路径逃逸出工作目录。",
 			},
 		},
 		"required": []string{"command"},
@@ -59,7 +70,7 @@ func (t *Tool) Definition() openai.Tool {
 		Type: openai.ToolTypeFunction,
 		Function: &openai.FunctionDefinition{
 			Name:        ToolName,
-			Description: "在系统的终端中执行 Shell 命令或脚本调度指令。支持只读探索与工具调用。只读指令自动执行，修改/高危指令需要用户确认。",
+			Description: "在系统的终端中执行 Shell 命令或脚本调度指令。支持只读探索与工具调用。只读指令自动执行，修改/高危指令需要用户确认。所有命令与路径必须限制在当前工作目录内部，严禁使用 '..' 或绝对路径跨越/逃逸工作目录。",
 			Parameters:  parameters,
 		},
 	}
@@ -81,13 +92,25 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 		workDir = "."
 	}
 
-	targetDir := workDir
+	cleanWorkDir, err := filepath.Abs(workDir)
+	if err != nil {
+		return "", fmt.Errorf("工作目录解析失败: %v", err)
+	}
+
+	// 1. 校验 cwd 路径边界
+	targetDir := cleanWorkDir
 	if args.Cwd != "" {
-		rel := filepath.Clean(args.Cwd)
-		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+		cleanCwd := filepath.Join(cleanWorkDir, args.Cwd)
+		absCwd, err := filepath.Abs(cleanCwd)
+		if err != nil || ValidateInWorkDir(absCwd, cleanWorkDir) != nil {
 			return "", fmt.Errorf("禁止跨工作目录路径逃逸: %s", args.Cwd)
 		}
-		targetDir = filepath.Join(workDir, rel)
+		targetDir = absCwd
+	}
+
+	// 2. 校验 command 中是否包含越界逃逸路径
+	if err := ValidateCommandBoundary(cleanWorkDir, command); err != nil {
+		return "", fmt.Errorf("禁止跨工作目录路径逃逸: %v", err)
 	}
 
 	// 5 分钟安全超时
@@ -106,7 +129,7 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	cmd.Stdout = &stdoutBuf
 	cmd.Stderr = &stderrBuf
 
-	err := cmd.Run()
+	err = cmd.Run()
 	outputStr := strings.TrimSpace(stdoutBuf.String())
 	stderrStr := strings.TrimSpace(stderrBuf.String())
 

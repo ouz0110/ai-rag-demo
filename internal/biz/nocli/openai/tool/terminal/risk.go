@@ -22,10 +22,15 @@ var DangerousCommands = []string{
 }
 
 // IsDangerousCommand 评估终端 Shell 指令是否高危（需触发人工审批中断）
-func IsDangerousCommand(command string) bool {
+func IsDangerousCommand(workDir, command string) bool {
 	cmd := strings.TrimSpace(strings.ToLower(command))
 	if cmd == "" {
 		return false
+	}
+
+	// 0. 优先检测路径逃逸/越界字符 (如含有超出 workDir 的路径引用)
+	if HasPathEscape(workDir, command) {
+		return true
 	}
 
 	// 1. 优先校验明确的高危指令
