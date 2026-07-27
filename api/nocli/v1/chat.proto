@@ -163,6 +163,10 @@ message CompletionRequest {
   string session_id = 2;
   // 模型名称
   string model = 3;
+  // 知识库租户ID (可选。若不传或为空，服务端自动使用默认租户ID 'default_tenant')
+  string kb_tenant_id = 4;
+  // 关联知识库ID标识 (可选。若不传或为空，服务端自动使用默认知识库 'kb_default_system')
+  string kb_id = 5;
 }
 
 // 恢复执行请求
@@ -179,6 +183,10 @@ message ResumeRequest {
   string reason = 5;
   // 模型名称
   string model = 6;
+  // 知识库租户ID (可选。若不传或为空，服务端自动使用默认租户ID 'default_tenant')
+  string kb_tenant_id = 7;
+  // 关联知识库ID标识 (可选。若不传或为空，服务端自动使用默认知识库 'kb_default_system')
+  string kb_id = 8;
 }
 
 // 会话概览信息

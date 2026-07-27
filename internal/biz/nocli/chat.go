@@ -48,7 +48,7 @@ func NewChatBiz(
 		log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
 	}
 
-	agentReg := agent.NewRegistry(cfg, openaiChatModel)
+	agentReg := agent.NewRegistry(cfg, openaiChatModel, vectorEngine)
 	skillMgr := skill.NewManager(skillReg)
 
 	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg, skillMgr)
@@ -65,10 +65,18 @@ func NewChatBiz(
 	}
 }
 
-func (s *ChatBiz) withParentContext(ctx context.Context, sessionID string, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+	if kbTenantID == "" {
+		kbTenantID = vector.DefaultTenantID
+	}
+	if kbID == "" {
+		kbID = vector.DefaultKBID
+	}
 	pc := &agentbase.ParentContext{
-		SessionID: sessionID,
-		Messages:  *messages,
+		SessionID:  sessionID,
+		KBTenantID: kbTenantID,
+		KBID:       kbID,
+		Messages:   *messages,
 		Appender: func(msgs []openai.ChatCompletionMessage) {
 			*messages = append(*messages, msgs...)
 		},
@@ -97,7 +105,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
-	ctx = s.withParentContext(ctx, sessionID, &messages, nil)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -172,7 +180,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 
 	newMessageStart := len(messages)
 
-	ctx = s.withParentContext(ctx, req.SessionId, &messages, nil)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

@@ -56,7 +56,7 @@ func (r *RAGRepo) GetDefaultKnowledgeBase(ctx context.Context, tenantID string) 
 	defaultKB := &KnowledgeBaseModel{
 		TenantID:    tenantID,
 		UserID:      0,
-		KBID:        "kb_default_system",
+		KBID:        DefaultKBID,
 		Name:        "系统默认知识库",
 		Description: "系统默认公共知识库",
 		IsDefault:   true,

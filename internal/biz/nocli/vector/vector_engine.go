@@ -91,10 +91,10 @@ func CalculateContentHash(content []byte) string {
 // IngestFileIncremental 生产级增量同步方法：基于 SHA256 哈希对比，文件未变动不删除/重生成 chunk；变动后仅删除对应文件 chunk 并重建
 func (e *VectorEngine) IngestFileIncremental(ctx context.Context, tenantID, kbID, filePath string) (*ragData.KnowledgeDocumentModel, error) {
 	if tenantID == "" {
-		tenantID = "default_tenant"
+		tenantID = DefaultTenantID
 	}
 	if kbID == "" {
-		kbID = "kb_default_system"
+		kbID = DefaultKBID
 	}
 	absPath, err := filepath.Abs(filePath)
 	if err != nil {
@@ -150,6 +150,9 @@ func (e *VectorEngine) IngestFileIncremental(ctx context.Context, tenantID, kbID
 		DocID:      newDocID,
 		Title:      fileTitle,
 		SourceType: ext,
+		DocVersion: "v1.0",
+		Category:   "default",
+		IsActive:   1,
 		FilePath:   absPath,
 		FileHash:   currentHash,
 		Status:     1, // 解析中
@@ -194,30 +197,38 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		c.Content = chunker.InjectMetadataPrefix(doc.Title, c.Content)
 	}
 
-	// 构造 MySQL 块
+	// 构造 MySQL 块 (附带切片 SHA256 Hash 与类型)
 	chunkModels := make([]*ragData.KnowledgeChunkModel, 0, len(splitRes.ParentChunks)+len(splitRes.ChildChunks))
 	for _, p := range splitRes.ParentChunks {
+		pHash := CalculateContentHash([]byte(p.Content))
 		chunkModels = append(chunkModels, &ragData.KnowledgeChunkModel{
 			TenantID:     doc.TenantID,
 			DocID:        doc.DocID,
 			ChunkID:      p.ChunkID,
 			ParentID:     "",
 			ChunkIndex:   p.ChunkIndex,
+			ChunkHash:    pHash,
+			ChunkType:    "text",
 			Content:      p.Content,
 			TokenCount:   p.TokenCount,
 			VectorStatus: 0,
+			IsActive:     1,
 		})
 	}
 	for _, c := range splitRes.ChildChunks {
+		cHash := CalculateContentHash([]byte(c.Content))
 		chunkModels = append(chunkModels, &ragData.KnowledgeChunkModel{
 			TenantID:     doc.TenantID,
 			DocID:        doc.DocID,
 			ChunkID:      c.ChunkID,
 			ParentID:     c.ParentID,
 			ChunkIndex:   c.ChunkIndex,
+			ChunkHash:    cHash,
+			ChunkType:    "text",
 			Content:      c.Content,
 			TokenCount:   c.TokenCount,
 			VectorStatus: 1,
+			IsActive:     1,
 		})
 	}
 
@@ -238,7 +249,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		return nil, fmt.Errorf("generate embeddings error: %w", err)
 	}
 
-	// 构建 VectorDocument
+	// 构建 VectorDocument (注入完整的标量 Metadata 属性)
 	vecDocs := make([]*vectorData.VectorDocument, len(splitRes.ChildChunks))
 	for i, c := range splitRes.ChildChunks {
 		vecDocs[i] = &vectorData.VectorDocument{
@@ -248,9 +259,13 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 			Vector:   vectors[i],
 			Content:  c.Content,
 			Metadata: map[string]interface{}{
-				"parent_id": c.ParentID,
-				"doc_id":    doc.DocID,
-				"tenant_id": doc.TenantID,
+				"parent_id":   c.ParentID,
+				"doc_id":      doc.DocID,
+				"tenant_id":   doc.TenantID,
+				"kb_id":       doc.KBID,
+				"is_active":   int32(1),
+				"doc_version": doc.DocVersion,
+				"chunk_type":  "text",
 			},
 		}
 	}
@@ -297,7 +312,7 @@ func (e *VectorEngine) AutoReloadKnowledgeBase(ctx context.Context) {
 		return
 	}
 
-	tenantID := "default_tenant"
+	tenantID := DefaultTenantID
 	foundFiles := make(map[string]bool)
 
 	err = filepath.Walk(absDir, func(path string, info os.FileInfo, walkErr error) error {
@@ -308,7 +323,7 @@ func (e *VectorEngine) AutoReloadKnowledgeBase(ctx context.Context) {
 		ext := strings.ToLower(filepath.Ext(path))
 		if ext == ".md" || ext == ".txt" || ext == ".json" || ext == ".pdf" || ext == ".docx" || ext == ".csv" || ext == ".tsv" {
 			foundFiles[path] = true
-			_, ingestErr := e.IngestFileIncremental(ctx, tenantID, "kb_default_system", path)
+			_, ingestErr := e.IngestFileIncremental(ctx, tenantID, DefaultKBID, path)
 			if ingestErr != nil {
 				log.Errorf(ctx, "[AutoReload] Ingest file [%s] error: %v", path, ingestErr)
 			}
@@ -340,7 +355,7 @@ func (e *VectorEngine) AutoReloadKnowledgeBase(ctx context.Context) {
 }
 
 func (e *VectorEngine) getCollectionName() string {
-	collectionName := "rag_knowledge"
+	collectionName := DefaultCollectionName
 	if e.cfg != nil && e.cfg.Source.VectorDB != nil && e.cfg.Source.VectorDB.Milvus != nil {
 		if e.cfg.Source.VectorDB.Milvus.CollectionName != "" {
 			collectionName = e.cfg.Source.VectorDB.Milvus.CollectionName
@@ -402,12 +417,13 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		return nil, fmt.Errorf("generate query embedding failed: %w", err)
 	}
 
-	// 2. 构建向量检索请求
+	// 2. 构建向量检索请求 (自动带上 OnlyActive: true 过滤掉被作废或失效的切片)
 	searchQuery := &vectorData.SearchQuery{
-		TenantID: tenantID,
-		Vector:   queryVec,
-		TopK:     topK * 2,
-		MinScore: scoreThreshold,
+		TenantID:   tenantID,
+		Vector:     queryVec,
+		TopK:       topK * 2,
+		MinScore:   scoreThreshold,
+		OnlyActive: true,
 	}
 
 	// 3. 执行 Hybrid Retriever 召回

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"ai-rag-demo/internal/conf"
@@ -67,7 +68,7 @@ func (a *milvusAdapter) CreateCollection(ctx context.Context, collectionName str
 	// Schema 定义
 	schema := &entity.Schema{
 		CollectionName: collectionName,
-		Description:    "RAG Vector Store Collection",
+		Description:    "Universal RAG Vector Store Collection",
 		Fields: []*entity.Field{
 			{
 				Name:       "id",
@@ -91,6 +92,31 @@ func (a *milvusAdapter) CreateCollection(ctx context.Context, collectionName str
 				IsPartitionKey: true, // 开启 Milvus Partition Key 级别多租户：触发底层分区裁剪 (Partition Pruning)，提升海量租户检索效率
 				TypeParams: map[string]string{
 					entity.TypeParamMaxLength: "128",
+				},
+			},
+			{
+				Name:     "kb_id",
+				DataType: entity.FieldTypeVarChar,
+				TypeParams: map[string]string{
+					entity.TypeParamMaxLength: "128",
+				},
+			},
+			{
+				Name:     "is_active",
+				DataType: entity.FieldTypeInt32, // 1: 生效, 0: 作废/失效
+			},
+			{
+				Name:     "doc_version",
+				DataType: entity.FieldTypeVarChar,
+				TypeParams: map[string]string{
+					entity.TypeParamMaxLength: "32",
+				},
+			},
+			{
+				Name:     "chunk_type",
+				DataType: entity.FieldTypeVarChar,
+				TypeParams: map[string]string{
+					entity.TypeParamMaxLength: "32",
 				},
 			},
 			{
@@ -144,6 +170,10 @@ func (a *milvusAdapter) Upsert(ctx context.Context, collectionName string, docs 
 	ids := make([]string, 0, len(docs))
 	docIDs := make([]string, 0, len(docs))
 	tenantIDs := make([]string, 0, len(docs))
+	kbIDs := make([]string, 0, len(docs))
+	isActives := make([]int32, 0, len(docs))
+	docVersions := make([]string, 0, len(docs))
+	chunkTypes := make([]string, 0, len(docs))
 	contents := make([]string, 0, len(docs))
 	vectors := make([][]float32, 0, len(docs))
 
@@ -153,15 +183,46 @@ func (a *milvusAdapter) Upsert(ctx context.Context, collectionName string, docs 
 		tenantIDs = append(tenantIDs, d.TenantID)
 		contents = append(contents, d.Content)
 		vectors = append(vectors, d.Vector)
+
+		// 解析标量元数据
+		kbID := "kb_default_system"
+		if v, ok := d.Metadata["kb_id"].(string); ok && v != "" {
+			kbID = v
+		}
+		kbIDs = append(kbIDs, kbID)
+
+		isActive := int32(1)
+		if v, ok := d.Metadata["is_active"].(int32); ok {
+			isActive = v
+		} else if v, ok := d.Metadata["is_active"].(int); ok {
+			isActive = int32(v)
+		}
+		isActives = append(isActives, isActive)
+
+		docVersion := "v1.0"
+		if v, ok := d.Metadata["doc_version"].(string); ok && v != "" {
+			docVersion = v
+		}
+		docVersions = append(docVersions, docVersion)
+
+		chunkType := "text"
+		if v, ok := d.Metadata["chunk_type"].(string); ok && v != "" {
+			chunkType = v
+		}
+		chunkTypes = append(chunkTypes, chunkType)
 	}
 
 	idCol := entity.NewColumnVarChar("id", ids)
 	docIDCol := entity.NewColumnVarChar("doc_id", docIDs)
 	tenantIDCol := entity.NewColumnVarChar("tenant_id", tenantIDs)
+	kbIDCol := entity.NewColumnVarChar("kb_id", kbIDs)
+	isActiveCol := entity.NewColumnInt32("is_active", isActives)
+	docVersionCol := entity.NewColumnVarChar("doc_version", docVersions)
+	chunkTypeCol := entity.NewColumnVarChar("chunk_type", chunkTypes)
 	contentCol := entity.NewColumnVarChar("content", contents)
 	vectorCol := entity.NewColumnFloatVector("vector", len(vectors[0]), vectors)
 
-	_, err := a.cli.Insert(ctx, collectionName, "", idCol, docIDCol, tenantIDCol, contentCol, vectorCol)
+	_, err := a.cli.Insert(ctx, collectionName, "", idCol, docIDCol, tenantIDCol, kbIDCol, isActiveCol, docVersionCol, chunkTypeCol, contentCol, vectorCol)
 	if err != nil {
 		return fmt.Errorf("milvus insert error: %w", err)
 	}
@@ -200,17 +261,25 @@ func (a *milvusAdapter) Search(ctx context.Context, collectionName string, query
 		return nil, fmt.Errorf("query vector cannot be empty")
 	}
 
-	expr := ""
+	exprParts := make([]string, 0)
 	if query.TenantID != "" {
-		expr = fmt.Sprintf("tenant_id == '%s'", query.TenantID)
+		exprParts = append(exprParts, fmt.Sprintf("tenant_id == '%s'", query.TenantID))
 	}
+	if query.KBID != "" {
+		exprParts = append(exprParts, fmt.Sprintf("kb_id == '%s'", query.KBID))
+	}
+	if query.OnlyActive {
+		exprParts = append(exprParts, "is_active == 1")
+	}
+
+	expr := strings.Join(exprParts, " && ")
 
 	sp, err := entity.NewIndexHNSWSearchParam(64)
 	if err != nil {
 		return nil, fmt.Errorf("search params build failed: %w", err)
 	}
 
-	outputFields := []string{"id", "doc_id", "tenant_id", "content"}
+	outputFields := []string{"id", "doc_id", "tenant_id", "kb_id", "is_active", "doc_version", "chunk_type", "content"}
 	vectors := []entity.Vector{entity.FloatVector(query.Vector)}
 
 	searchRes, err := a.cli.Search(ctx, collectionName, []string{}, expr, outputFields, vectors, "vector", entity.COSINE, query.TopK, sp)

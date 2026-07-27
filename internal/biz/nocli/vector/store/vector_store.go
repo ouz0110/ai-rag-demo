@@ -25,10 +25,13 @@ type VectorSearchResult struct {
 
 // SearchQuery 向量检索查询入参
 type SearchQuery struct {
-	TenantID string    `json:"tenant_id"`
-	Vector   []float32 `json:"vector"`
-	TopK     int       `json:"top_k"`
-	MinScore float32   `json:"min_score"`
+	TenantID   string    `json:"tenant_id"`   // 租户 ID (Partition Key)
+	KBID       string    `json:"kb_id"`       // 知识库 ID
+	Vector     []float32 `json:"vector"`      // 查询向量
+	TopK       int       `json:"top_k"`       // 召回数量
+	MinScore   float32   `json:"min_score"`   // 最低相似度阈值
+	OnlyActive bool      `json:"only_active"` // 是否仅检索生效切片 (过滤 is_active == 1)
+	Category   string    `json:"category"`    // 业务分类过滤
 }
 
 // VectorStore 向量数据库驱动高层抽象接口 (Vector DB Agnostic)

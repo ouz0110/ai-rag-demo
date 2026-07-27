@@ -38,7 +38,7 @@ func NewKBBiz(
 
 // CreateKnowledgeBase 创建新的自定义知识库 (独立隔离开默认公共知识库)
 func (b *KBBiz) CreateKnowledgeBase(ctx context.Context, name, description string) (*rag.KnowledgeBaseModel, error) {
-	tenantID := "default_tenant"
+	tenantID := vector.DefaultTenantID
 	userID := int64(0)
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
@@ -65,7 +65,7 @@ func (b *KBBiz) CreateKnowledgeBase(ctx context.Context, name, description strin
 
 // ListKnowledgeBases 列出用户权限范围内的全部知识库 (包含系统默认知识库与用户自定义知识库)
 func (b *KBBiz) ListKnowledgeBases(ctx context.Context) ([]*rag.KnowledgeBaseModel, error) {
-	tenantID := "default_tenant"
+	tenantID := vector.DefaultTenantID
 	userID := int64(0)
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
@@ -79,7 +79,7 @@ func (b *KBBiz) ListKnowledgeBases(ctx context.Context) ([]*rag.KnowledgeBaseMod
 
 // DeleteKnowledgeBase 删除自定义知识库 (系统默认公共知识库禁止删除)
 func (b *KBBiz) DeleteKnowledgeBase(ctx context.Context, kbID string) error {
-	tenantID := "default_tenant"
+	tenantID := vector.DefaultTenantID
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
 	}
@@ -102,7 +102,7 @@ func (b *KBBiz) DeleteKnowledgeBase(ctx context.Context, kbID string) error {
 
 // UploadAndIngestFile 接收文件流上传保存至配置目录，并触发生产级 RAG 增量解析切片与向量化
 func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, r io.Reader) (*rag.KnowledgeDocumentModel, error) {
-	tenantID := "default_tenant"
+	tenantID := vector.DefaultTenantID
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
 	}

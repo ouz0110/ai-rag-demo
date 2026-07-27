@@ -1,6 +1,7 @@
 package tool
 
 import (
+	"ai-rag-demo/internal/biz/nocli/vector"
 	"ai-rag-demo/internal/conf"
 	"context"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	list_file "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
+	ragtool "ai-rag-demo/internal/biz/nocli/openai/tool/rag"
 	readfiles "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
 	terminaltool "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
 )
@@ -22,12 +24,18 @@ type Registry struct {
 	tools map[string]Tool
 }
 
-func NewRegistry(cfg *conf.Config) *Registry {
+func NewRegistry(cfg *conf.Config, engines ...*vector.VectorEngine) *Registry {
+	var vecEngine *vector.VectorEngine
+	if len(engines) > 0 {
+		vecEngine = engines[0]
+	}
+
 	return &Registry{
 		tools: map[string]Tool{
 			list_file.ToolName:    list_file.NewTool(cfg),
 			readfiles.ToolName:    readfiles.NewTool(cfg),
 			terminaltool.ToolName: terminaltool.NewTool(cfg),
+			ragtool.ToolName:      ragtool.NewTool(cfg, vecEngine),
 		},
 	}
 }
