@@ -1,9 +1,11 @@
 package server
 
 import (
+	noclipb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/metrics"
 	"ai-rag-demo/internal/server/middleware"
+	"ai-rag-demo/internal/service/nocli"
 
 	kratosmetrics "github.com/go-kratos/kratos/v2/middleware/metrics"
 	"github.com/go-kratos/kratos/v2/middleware/tracing"
@@ -14,9 +16,14 @@ import (
 // NewGRPCServer new a gRPC server.
 func NewGRPCServer(
 	cfg *conf.Config,
+	kbSrv *nocli.KBService,
 ) *grpc.Server {
 	opts := wrapGRPCOptions(cfg)
 	server := grpc.NewServer(opts...)
+
+	// 注册 Protobuf 知识库管理 gRPC 服务
+	noclipb.RegisterKnowledgeBaseServer(server, kbSrv)
+
 	return server
 }
 

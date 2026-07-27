@@ -96,6 +96,55 @@ type SkillConfig struct {
 	Path string `json:"path"`
 }
 
+type MilvusConfig struct {
+	Address        string `json:"address"`
+	Username       string `json:"username"`
+	Password       string `json:"password"`
+	DBName         string `json:"db_name"`
+	CollectionName string `json:"collection_name"`
+	Dimension      int    `json:"dimension"`
+}
+
+type VectorDBConfig struct {
+	Driver string        `json:"driver"` // milvus | qdrant | pgvector
+	Milvus *MilvusConfig `json:"milvus"`
+}
+
+type EmbeddingConfig struct {
+	APIKey    string `json:"api_key"`
+	BaseURL   string `json:"base_url"`
+	Model     string `json:"model"`
+	Dimension int    `json:"dimension"` // 动态向量维度 (如 1024, 1536, 3072)
+}
+
+type ChunkerConfig struct {
+	ParentSize     int     `json:"parent_size"`     // 父块字符数
+	ChildSize      int     `json:"child_size"`      // 子块字符数
+	Overlap        int     `json:"overlap"`         // 重叠字符数
+	MergeThreshold float32 `json:"merge_threshold"` // 高相似度语义合并阈值 (默认 0.75)
+	SplitThreshold float32 `json:"split_threshold"` // 话题断层切割阈值 (默认 0.45)
+}
+
+type RerankConfig struct {
+	Enable  bool   `json:"enable"`   // 是否开启重排
+	Driver  string `json:"driver"`   // llm | bge | cohere
+	APIKey  string `json:"api_key"`  // 独立 Rerank APIKey
+	BaseURL string `json:"base_url"` // 独立 Rerank BaseURL
+	Model   string `json:"model"`    // 重排模型名称 (如 gpt-4o-mini 或 bge-reranker-v2-m3)
+	Timeout int    `json:"timeout"`  // 硬超时时间 (毫秒，默认 1000ms)
+}
+
+type RAGConfig struct {
+	KnowledgeDir   string           `json:"knowledge_dir"`   // 默认公共知识库文件目录
+	UploadDir      string           `json:"upload_dir"`      // 用户自主上传文件的存储目录
+	AutoReload     bool             `json:"auto_reload"`     // 启动时是否自动增量重载知识库
+	TopK           int              `json:"top_k"`           // 默认召回 TopK
+	ScoreThreshold float32          `json:"score_threshold"` // 默认相似度得分阈值
+	Embedding      *EmbeddingConfig `json:"embedding"`       // 独立 Embedding AI 配置
+	Chunker        *ChunkerConfig   `json:"chunker"`         // 细粒度切片配置
+	Rerank         *RerankConfig    `json:"rerank"`          // 独立 Rerank 重排配置
+}
+
 type Config struct {
 	Secret      string `json:"secret"`
 	Name        string `json:"name"`
@@ -137,7 +186,9 @@ type Config struct {
 		OpenAI         *OpenAI                 `json:"openai"`
 		Nocli          *NocliConfig            `json:"nocli"`
 		Skill          *SkillConfig            `json:"skill"`
-		Nacos          struct {
+		VectorDB *VectorDBConfig `json:"vector_db"`
+		RAG      *RAGConfig      `json:"rag"`
+		Nacos    struct {
 			Addr      string `json:"addr"`
 			Port      string `json:"port"`
 			Username  string `json:"username"`

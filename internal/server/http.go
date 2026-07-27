@@ -46,6 +46,7 @@ func NewHTTPServer(
 	cache *cache.Cache,
 	accountSrv *base.AccountService,
 	chatSrv *nocli.ChatService,
+	kbSrv *nocli.KBService,
 ) *transHttp.Server {
 	opts := wrapHTTPOptions(cfg, cache)
 	server := transHttp.NewServer(opts...)
@@ -59,11 +60,15 @@ func NewHTTPServer(
 	rootRouter.POST("/nocli/v1/stream/completion", wrapStreamHandler(cfg, cache, chatSrv.StreamCompletionHTTP))
 	rootRouter.POST("/nocli/v1/stream/resume", wrapStreamHandler(cfg, cache, chatSrv.StreamResumeHTTP))
 
+	// 🎯 注册独立文件上传 HTTP 接口 (multipart/form-data 特殊处理)
+	rootRouter.POST("/nocli/v1/rag/upload", kbSrv.UploadFileHTTP)
+
 	// 注册账号服务
 	basepb.RegisterAccountsHTTPServer(server, accountSrv)
 
-	// 注册AI对话服务 (常规 Unary 接口)
+	// 注册 AI 对话服务与 Protobuf 知识库管理服务 (常规 Unary HTTP 接口)
 	noclipb.RegisterNocliChatHTTPServer(server, chatSrv)
+	noclipb.RegisterKnowledgeBaseHTTPServer(server, kbSrv)
 
 	return server
 }

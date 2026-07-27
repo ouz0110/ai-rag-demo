@@ -10,6 +10,7 @@ import (
 	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	"ai-rag-demo/internal/biz/nocli/session"
+	"ai-rag-demo/internal/biz/nocli/vector"
 	"ai-rag-demo/internal/cache"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
@@ -26,6 +27,7 @@ type ChatBiz struct {
 	agentRegistry   *agent.Registry
 	skillManager    *skill.Manager
 	sessionMgr      *session.SessionManager
+	vectorEngine    *vector.VectorEngine
 	cfg             *conf.Config
 	allDb           *data.DB
 }
@@ -35,6 +37,7 @@ func NewChatBiz(
 	openaiChatModel *chatmodel.ChatModel,
 	cfg *conf.Config,
 	allDb *data.DB,
+	vectorEngine *vector.VectorEngine,
 ) *ChatBiz {
 	var skillsDir string
 	if cfg != nil && cfg.Source.Skill != nil {
@@ -56,6 +59,7 @@ func NewChatBiz(
 		agentRegistry:   agentReg,
 		skillManager:    skillMgr,
 		sessionMgr:      sessionMgr,
+		vectorEngine:    vectorEngine,
 		cfg:             cfg,
 		allDb:           allDb,
 	}
