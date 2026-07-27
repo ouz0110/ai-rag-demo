@@ -15,10 +15,10 @@ import (
 	"ai-rag-demo/internal/biz/nocli/vector/parser"
 	"ai-rag-demo/internal/biz/nocli/vector/rerank"
 	"ai-rag-demo/internal/biz/nocli/vector/retriever"
+	vectorData "ai-rag-demo/internal/biz/nocli/vector/store"
 	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
 	ragData "ai-rag-demo/internal/data/rag"
-	vectorData "ai-rag-demo/internal/biz/nocli/vector/store"
 	"ai-rag-demo/internal/pkg/log"
 
 	"github.com/google/uuid"

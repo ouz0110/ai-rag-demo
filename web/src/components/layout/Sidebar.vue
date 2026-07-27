@@ -58,7 +58,7 @@
               class="interrupt-dot"
               title="等待人工授权审批"
             ></span>
-            <span class="item-name">{{ s.name || '新会话 ' + s.session_id.slice(0, 6) }}</span>
+            <span class="item-name">{{ s.name || '新会话 ' + (s.session_id ? s.session_id.slice(0, 6) : '') }}</span>
           </div>
 
           <!-- 删除按钮 -->

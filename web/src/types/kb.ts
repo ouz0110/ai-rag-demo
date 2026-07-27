@@ -33,11 +33,11 @@ export interface CreateKBRequest {
 }
 
 export interface UploadFileResponse {
-  doc_id: string;
-  kb_id: string;
+  docId: string;
+  kbId: string;
   title: string;
-  source_type: string;
-  total_chunks: number;
+  sourceType: string;
+  totalChunks: number;
   status: number;
 }
 

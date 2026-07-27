@@ -146,22 +146,15 @@ func (s *KBService) UploadFileHTTP(ctx transHttp.Context) error {
 	// 执行上传与解析向量化
 	docModel, err := s.kbBiz.UploadAndIngestFile(req.Context(), kbID, header.Filename, file)
 	if err != nil {
-		return ctx.Result(http.StatusInternalServerError, map[string]interface{}{
-			"code":    500,
-			"message": err.Error(),
-		})
+		return err
 	}
 
-	return ctx.Result(http.StatusOK, map[string]interface{}{
-		"code":    0,
-		"message": "file uploaded and ingested successfully",
-		"data": map[string]interface{}{
-			"doc_id":       docModel.DocID,
-			"kb_id":        docModel.KBID,
-			"title":        docModel.Title,
-			"source_type":  docModel.SourceType,
-			"total_chunks": docModel.TotalChunks,
-			"status":       docModel.Status,
-		},
+	return ctx.Result(http.StatusOK, &pb.UploadFileResponse{
+		DocId:       docModel.DocID,
+		KbId:        docModel.KBID,
+		Title:       docModel.Title,
+		SourceType:  docModel.SourceType,
+		TotalChunks: docModel.TotalChunks,
+		Status:      docModel.Status,
 	})
 }

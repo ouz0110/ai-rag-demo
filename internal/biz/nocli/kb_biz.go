@@ -39,7 +39,6 @@ func NewKBBiz(
 // CreateKnowledgeBase 创建新的自定义知识库 (独立隔离开默认公共知识库)
 func (b *KBBiz) CreateKnowledgeBase(ctx context.Context, name, description string) (*rag.KnowledgeBaseModel, error) {
 	tenantID := vector.DefaultTenantID
-	userID := int64(0)
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
 	}
@@ -47,7 +46,6 @@ func (b *KBBiz) CreateKnowledgeBase(ctx context.Context, name, description strin
 	kbID := fmt.Sprintf("kb_%s", uuid.New().String())
 	kbModel := &rag.KnowledgeBaseModel{
 		TenantID:    tenantID,
-		UserID:      userID,
 		KBID:        kbID,
 		Name:        name,
 		Description: description,
@@ -66,15 +64,23 @@ func (b *KBBiz) CreateKnowledgeBase(ctx context.Context, name, description strin
 // ListKnowledgeBases 列出用户权限范围内的全部知识库 (包含系统默认知识库与用户自定义知识库)
 func (b *KBBiz) ListKnowledgeBases(ctx context.Context) ([]*rag.KnowledgeBaseModel, error) {
 	tenantID := vector.DefaultTenantID
-	userID := int64(0)
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
 	}
 
 	// 确保租户下的默认知识库已初始化
-	_, _ = b.ragRepo.GetDefaultKnowledgeBase(ctx, tenantID)
+	defaultKB, _ := b.ragRepo.GetDefaultKnowledgeBase(ctx, vector.DefaultTenantID)
 
-	return b.ragRepo.ListKnowledgeBases(ctx, tenantID, userID)
+	kbs, err := b.ragRepo.ListKnowledgeBases(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+
+	if defaultKB != nil {
+		kbs = append([]*rag.KnowledgeBaseModel{defaultKB}, kbs...)
+	}
+
+	return kbs, nil
 }
 
 // DeleteKnowledgeBase 删除自定义知识库 (系统默认公共知识库禁止删除)
@@ -108,17 +114,12 @@ func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, 
 	}
 
 	if kbID == "" {
-		defaultKB, err := b.ragRepo.GetDefaultKnowledgeBase(ctx, tenantID)
-		if err != nil {
-			return nil, fmt.Errorf("fetch default kb failed: %w", err)
-		}
-		kbID = defaultKB.KBID
-	} else {
-		// 校验指定 KB 存在性
-		_, err := b.ragRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
-		if err != nil {
-			return nil, fmt.Errorf("knowledge base [%s] not found: %w", kbID, err)
-		}
+		return nil, fmt.Errorf("knowledge base id is empty")
+	}
+	// 校验指定 KB 存在性
+	_, err := b.ragRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
+	if err != nil {
+		return nil, fmt.Errorf("knowledge base [%s] not found: %v", kbID, err)
 	}
 
 	// 读取配置中的上传目录地址

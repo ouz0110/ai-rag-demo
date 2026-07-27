@@ -55,7 +55,6 @@ func (r *RAGRepo) GetDefaultKnowledgeBase(ctx context.Context, tenantID string) 
 	// 若不存在默认知识库，自动初始化一条
 	defaultKB := &KnowledgeBaseModel{
 		TenantID:    tenantID,
-		UserID:      0,
 		KBID:        DefaultKBID,
 		Name:        "系统默认知识库",
 		Description: "系统默认公共知识库",
@@ -86,11 +85,11 @@ func (r *RAGRepo) DeleteKnowledgeBase(ctx context.Context, tenantID, kbID string
 		Delete(&KnowledgeBaseModel{}).Error
 }
 
-// ListKnowledgeBases 列出用户及系统默认的知识库
-func (r *RAGRepo) ListKnowledgeBases(ctx context.Context, tenantID string, userID int64) ([]*KnowledgeBaseModel, error) {
+// ListKnowledgeBases 列出租户下的所有知识库
+func (r *RAGRepo) ListKnowledgeBases(ctx context.Context, tenantID string) ([]*KnowledgeBaseModel, error) {
 	var kbs []*KnowledgeBaseModel
 	err := r.KBRepo.GormDB(ctx).Model(&KnowledgeBaseModel{}).
-		Where("tenant_id = ? AND (user_id = ? OR is_default = ?)", tenantID, userID, true).
+		Where("tenant_id = ?", tenantID).
 		Order("is_default desc, id desc").
 		Find(&kbs).Error
 	return kbs, err
@@ -203,7 +202,7 @@ func (r *RAGRepo) ListAllDocuments(ctx context.Context, tenantID string) ([]*Kno
 // ListDocumentsByKBID 按 KBID 查询文档列表 (若 kbID 为空则获取租户下全部文档)
 func (r *RAGRepo) ListDocumentsByKBID(ctx context.Context, tenantID, kbID string) ([]*KnowledgeDocumentModel, error) {
 	var docs []*KnowledgeDocumentModel
-	db := r.DocRepo.GormDB(ctx).Model(&KnowledgeDocumentModel{}).Where("tenant_id = ?", tenantID)
+	db := r.DocRepo.GormDB(ctx).Model(&KnowledgeDocumentModel{}).Where("tenant_id in (?)", []string{tenantID, DefaultTenantID})
 	if kbID != "" {
 		db = db.Where("kb_id = ?", kbID)
 	}

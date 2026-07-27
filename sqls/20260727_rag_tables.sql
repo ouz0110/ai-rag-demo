@@ -9,7 +9,6 @@
 CREATE TABLE IF NOT EXISTS `knowledge_bases` (
   `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `tenant_id`    VARCHAR(64)  NOT NULL DEFAULT 'default_tenant' COMMENT '租户ID',
-  `user_id`      BIGINT       NOT NULL DEFAULT 0 COMMENT '创建用户ID',
   `kb_id`        VARCHAR(64)  NOT NULL COMMENT '知识库UUID标识',
   `name`         VARCHAR(128) NOT NULL COMMENT '知识库名称',
   `description`  VARCHAR(512) DEFAULT '' COMMENT '知识库描述',
@@ -18,8 +17,7 @@ CREATE TABLE IF NOT EXISTS `knowledge_bases` (
   `updated_at`   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_kb_id` (`kb_id`),
-  KEY `idx_tenant_kb` (`tenant_id`, `is_default`, `user_id`),
-  KEY `idx_user_id` (`user_id`)
+  KEY `idx_tenant_kb` (`tenant_id`, `is_default`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='知识库主表';
 
 

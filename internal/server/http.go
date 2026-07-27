@@ -60,8 +60,8 @@ func NewHTTPServer(
 	rootRouter.POST("/nocli/v1/stream/completion", wrapStreamHandler(cfg, cache, chatSrv.StreamCompletionHTTP))
 	rootRouter.POST("/nocli/v1/stream/resume", wrapStreamHandler(cfg, cache, chatSrv.StreamResumeHTTP))
 
-	// 🎯 注册独立文件上传 HTTP 接口 (multipart/form-data 特殊处理)
-	rootRouter.POST("/nocli/v1/rag/upload", kbSrv.UploadFileHTTP)
+	// 🎯 注册独立文件上传 HTTP 接口 (经过 Kratos 全量中间件链处理，确保包含鉴权 UserFromContext、日志与 Trace)
+	rootRouter.POST("/nocli/v1/rag/upload", wrapHTTPHandler(kbSrv.UploadFileHTTP))
 
 	// 注册账号服务
 	basepb.RegisterAccountsHTTPServer(server, accountSrv)

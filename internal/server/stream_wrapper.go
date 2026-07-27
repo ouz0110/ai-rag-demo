@@ -60,6 +60,22 @@ func wrapStreamHandler(
 	}
 }
 
+// wrapHTTPHandler 为自定义的 HTTP Context Handler 挂载全量 Kratos 中间件链 (自动提取 Operation，包含鉴权, 日志, Trace, i18n, Recovery 等)
+func wrapHTTPHandler(handler func(ctx transHttp.Context) error) func(ctx transHttp.Context) error {
+	return func(ctx transHttp.Context) error {
+		req := ctx.Request()
+		// 动态获取当前请求的 Path 作为 Operation，无需手动硬编码重复传参
+		transHttp.SetOperation(ctx, req.URL.Path)
+		h := ctx.Middleware(func(mwCtx context.Context, _ interface{}) (interface{}, error) {
+			// 将经过中间件链 (包含 HTTPAuth 注入的用户 context) 重新绑定给 request
+			*req = *req.WithContext(mwCtx)
+			return nil, handler(ctx)
+		})
+		_, err := h(req.Context(), nil)
+		return err
+	}
+}
+
 // streamTransport 为 SSE 流式请求实现 transport.Transporter 接口
 type streamTransport struct {
 	req *http.Request

@@ -22,7 +22,7 @@ export async function createKnowledgeBase(
 export async function deleteKnowledgeBase(
   kb_id: string
 ): Promise<{ success: boolean }> {
-  return http.post('/nocli/v1/kb/delete', { kb_id });
+  return http.post('/nocli/v1/kb/delete', { kb_id, kbId: kb_id });
 }
 
 // 4. 上传文档二进制并触发增量解析 (POST /nocli/v1/rag/upload - multipart/form-data)
@@ -34,6 +34,7 @@ export async function uploadDocumentFile(
   formData.append('file', file);
   if (kb_id) {
     formData.append('kb_id', kb_id);
+    formData.append('kbId', kb_id);
   }
 
   return http.post('/nocli/v1/rag/upload', formData, {
@@ -47,7 +48,7 @@ export async function uploadDocumentFile(
 export async function listDocuments(
   kb_id?: string
 ): Promise<{ docs: KnowledgeDocument[] }> {
-  return http.get('/nocli/v1/kb/doc/list', { params: { kb_id } });
+  return http.get('/nocli/v1/kb/doc/list', { params: { kb_id, kbId: kb_id } });
 }
 
 // 6. 删除文档及其关联切片 (POST /nocli/v1/kb/doc/delete)

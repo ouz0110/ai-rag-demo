@@ -4,7 +4,7 @@ import type { CommonResponse } from '../types/api';
 // 创建 Axios 实例
 export const http = axios.create({
   baseURL: '', // 使用相对路径支持 Vite proxy 开发代理
-  timeout: 30000,
+  timeout: 300000,
   headers: {
     'Content-Type': 'application/json',
   },

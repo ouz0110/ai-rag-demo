@@ -134,3 +134,14 @@ message DeleteDocumentRequest {
 message DeleteDocumentResponse {
   bool success = 1;
 }
+
+
+// 文件上传响应
+message UploadFileResponse {
+  string doc_id = 1;
+  string kb_id = 2;
+  string title = 3;
+  string source_type = 4;
+  int32 total_chunks = 5;
+  int32 status = 6;
+}
