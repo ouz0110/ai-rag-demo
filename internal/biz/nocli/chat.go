@@ -16,6 +16,8 @@ import (
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
 	"ai-rag-demo/internal/pkg/skill"
+
+	openai "github.com/sashabaranov/go-openai"
 )
 
 type ChatBiz struct {
@@ -59,6 +61,20 @@ func NewChatBiz(
 	}
 }
 
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID string, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+	pc := &agentbase.ParentContext{
+		SessionID: sessionID,
+		Messages:  *messages,
+		Appender: func(msgs []openai.ChatCompletionMessage) {
+			*messages = append(*messages, msgs...)
+		},
+	}
+	if emitter != nil {
+		pc.Emitter = emitter
+	}
+	return pc.Inject(ctx)
+}
+
 func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.StreamChunk, error) {
 	sessionID, err := s.sessionMgr.InitOrCreateSession(ctx, req.SessionId, req.Message)
 	if err != nil {
@@ -77,8 +93,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
-	ctx = context.WithValue(ctx, "parent_session_id", sessionID)
-	ctx = context.WithValue(ctx, "parent_messages", messages)
+	ctx = s.withParentContext(ctx, sessionID, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -153,8 +168,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 
 	newMessageStart := len(messages)
 
-	ctx = context.WithValue(ctx, "parent_session_id", req.SessionId)
-	ctx = context.WithValue(ctx, "parent_messages", messages)
+	ctx = s.withParentContext(ctx, req.SessionId, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

@@ -73,7 +73,7 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 	// 1. 构造子 Agent 的输入消息列表 (支持 PassFullContextToSubAgent 开关)
 	var subMessages []openai.ChatCompletionMessage
 	if t.opts.PassFullContextToSubAgent {
-		if parentMsgs, ok := ctx.Value("parent_messages").([]openai.ChatCompletionMessage); ok && len(parentMsgs) > 0 {
+		if parentMsgs, ok := ctx.Value(base.ParentMessagesKey).([]openai.ChatCompletionMessage); ok && len(parentMsgs) > 0 {
 			subMessages = append(subMessages, parentMsgs...)
 		}
 	}
@@ -91,12 +91,12 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 	})
 
 	// 继承父 Agent 的真实 SessionID
-	sessionID, _ := ctx.Value("parent_session_id").(string)
+	sessionID, _ := ctx.Value(base.ParentSessionIDKey).(string)
 
 	// 2. 构造子 Agent 的 StreamEmitter (支持 StreamSubAgentExecution 开关，并打上当前 AgentName 标记)
 	var subEmitter base.StreamEmitter
 	if t.opts.StreamSubAgentExecution {
-		if parentEmitter, ok := ctx.Value("parent_emitter").(base.StreamEmitter); ok && parentEmitter != nil {
+		if parentEmitter, ok := ctx.Value(base.ParentEmitterKey).(base.StreamEmitter); ok && parentEmitter != nil {
 			subEmitter = func(chunk *pb.StreamChunk) {
 				if chunk != nil {
 					chunk.AgentName = t.targetAgent.Name()
@@ -126,6 +126,12 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 	}
 
 	log.Debugw(ctx, "agent_tool_completed", "target_agent", t.targetAgent.Name(), "reply_len", len(loopRes.Reply))
+
+	if t.opts.ReturnFullContextToParent {
+		if appender, ok := ctx.Value(base.ParentAppenderKey).(func([]openai.ChatCompletionMessage)); ok && appender != nil {
+			appender(loopRes.Messages)
+		}
+	}
 
 	return fmt.Sprintf("【子 Agent (%s) 独立执行总结】:\n%s", t.targetAgent.Name(), loopRes.Reply), nil
 }

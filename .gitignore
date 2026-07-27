@@ -12,3 +12,4 @@ config.local.yaml
 bin/
 cmd/server/log
 log/
+workspace/

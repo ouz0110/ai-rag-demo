@@ -343,7 +343,12 @@ export const useChatStore = defineStore('chat', () => {
   async function sendMessage(text: string) {
     if (!text.trim() || isGenerating.value) return;
 
-    // 先插入用户消息
+    // 若无会话 ID，先设定一个临时 session_id 方便立即切页展示
+    if (!currentSessionId.value) {
+      currentSessionId.value = 'temp-' + Date.now();
+    }
+
+    // 立马插入用户消息
     const userMsg: UIChatMessage = {
       id: 'user-' + Date.now(),
       role: 'user',
@@ -356,9 +361,28 @@ export const useChatStore = defineStore('chat', () => {
     };
     messages.value.push(userMsg);
 
+    // 立马插入 Agent 响应占位消息（携带 isStreaming: true 以展现 loading 效果）
+    const assistantMsg: UIChatMessage = {
+      id: 'assistant-' + Date.now(),
+      role: 'assistant',
+      content: '',
+      reasoning_content: '',
+      agent_name: 'main',
+      tools: [],
+      segments: [],
+      created_at: Date.now(),
+      isStreaming: true,
+    };
+    messages.value.push(assistantMsg);
+
     isGenerating.value = true;
     pendingToolCalls.value = [];
     sessionStatus.value = SessionStatus.SS_RUNNING;
+
+    // 若当前在 /chat 首页，立即路由跳转到对话详情视图
+    if (router.currentRoute.value.path === '/chat' || router.currentRoute.value.path === '/chat/') {
+      router.push(`/chat/${currentSessionId.value}`);
+    }
 
     abortController = new AbortController();
 
@@ -366,7 +390,7 @@ export const useChatStore = defineStore('chat', () => {
       url: '/nocli/v1/stream/completion',
       body: {
         message: text,
-        session_id: currentSessionId.value,
+        session_id: currentSessionId.value.startsWith('temp-') ? '' : currentSessionId.value,
         model: selectedModel.value,
       },
       signal: abortController.signal,
@@ -375,7 +399,10 @@ export const useChatStore = defineStore('chat', () => {
       },
       onError: (err: Error) => {
         const lastMsg = messages.value[messages.value.length - 1];
-        if (lastMsg) lastMsg.error = err.message || '输出发生异常';
+        if (lastMsg) {
+          lastMsg.error = err.message || '输出发生异常';
+          lastMsg.isStreaming = false;
+        }
         isGenerating.value = false;
         sessionStatus.value = SessionStatus.SS_IDLE;
       },
@@ -419,7 +446,10 @@ export const useChatStore = defineStore('chat', () => {
       },
       onError: (err: Error) => {
         const lastMsg = messages.value[messages.value.length - 1];
-        if (lastMsg) lastMsg.error = err.message || '恢复响应发生错误';
+        if (lastMsg) {
+          lastMsg.error = err.message || '恢复响应发生错误';
+          lastMsg.isStreaming = false;
+        }
         isGenerating.value = false;
         sessionStatus.value = SessionStatus.SS_IDLE;
       },
@@ -436,13 +466,21 @@ export const useChatStore = defineStore('chat', () => {
   function handleStreamChunk(chunk: any) {
     const sId = chunk.session_id || chunk.sessionId;
     if (sId && sId !== 'undefined') {
-      const isNewSession = !currentSessionId.value || currentSessionId.value !== sId;
+      const isNewSession =
+        !currentSessionId.value ||
+        currentSessionId.value.startsWith('temp-') ||
+        currentSessionId.value !== sId;
+      const oldSessionId = currentSessionId.value;
       currentSessionId.value = sId;
 
       if (isNewSession) {
         fetchSessions();
-        if (router.currentRoute.value.path === '/chat' || router.currentRoute.value.path === '/chat/') {
-          router.push(`/chat/${sId}`);
+        if (
+          router.currentRoute.value.path === '/chat' ||
+          router.currentRoute.value.path === '/chat/' ||
+          router.currentRoute.value.path === `/chat/${oldSessionId}`
+        ) {
+          router.replace(`/chat/${sId}`);
         }
       }
     }

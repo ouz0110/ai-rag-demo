@@ -43,6 +43,20 @@
 
         <!-- 3. 助手消息 (按 segments 顺序交织渲染小块: 文本 ➔ 工具 ➔ 文本 ➔ 工具) -->
         <div v-else class="segments-container flex flex-col gap-2">
+          <!-- 助手等待/思考中 Loading 状态 (当尚未收到 content / reasoning / segments 时) -->
+          <div
+            v-if="msg.isStreaming && !msg.content && !msg.reasoning_content && (!msg.segments || msg.segments.length === 0)"
+            class="agent-loading-state"
+          >
+            <Loader2 :size="16" class="animate-spin text-indigo-400" />
+            <span class="loading-text font-medium">AI-RAG Agent 正在思考中...</span>
+            <div class="loading-dots">
+              <span class="dot"></span>
+              <span class="dot"></span>
+              <span class="dot"></span>
+            </div>
+          </div>
+
           <!-- 回退兼容: 如果 segments 为空，但 content 存在 -->
           <div
             v-if="(!msg.segments || msg.segments.length === 0) && msg.content"
@@ -132,7 +146,7 @@
 import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import { Bot, Copy, Check, Brain, AlertCircle } from 'lucide-vue-next';
+import { Bot, Copy, Check, Brain, AlertCircle, Loader2 } from 'lucide-vue-next';
 import CoTBox from './CoTBox.vue';
 import ToolCallBox from './ToolCallBox.vue';
 import { useUserStore } from '../../stores/user';
@@ -424,6 +438,60 @@ function handleCardClick(e: MouseEvent) {
 .text-segment-block:hover .segment-actions-bar {
   opacity: 1;
   visibility: visible;
+}
+
+/* Agent 思考 / 等待响应 Loading 样式 */
+.agent-loading-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0.375rem 0.25rem;
+  color: #a5b4fc;
+  font-size: 0.84375rem;
+  user-select: none;
+}
+
+.loading-text {
+  background: linear-gradient(90deg, #a5b4fc 0%, #c084fc 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.loading-dots {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+}
+
+.loading-dots .dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background-color: #818cf8;
+  animation: dotPulse 1.4s infinite ease-in-out both;
+}
+
+.loading-dots .dot:nth-child(1) {
+  animation-delay: -0.32s;
+}
+
+.loading-dots .dot:nth-child(2) {
+  animation-delay: -0.16s;
+}
+
+@keyframes dotPulse {
+  0%,
+  80%,
+  100% {
+    transform: scale(0.6);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1.2);
+    opacity: 1;
+    background-color: #c084fc;
+  }
 }
 </style>
 
