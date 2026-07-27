@@ -364,6 +364,15 @@ func (e *VectorEngine) getCollectionName() string {
 	return collectionName
 }
 
+// DeleteDocVectors 从向量索引中清理掉指定 docID 的全部向量切片
+func (e *VectorEngine) DeleteDocVectors(ctx context.Context, tenantID, docID string) error {
+	if e.vectorStore != nil {
+		collectionName := e.getCollectionName()
+		return e.vectorStore.DeleteByDocID(ctx, collectionName, tenantID, docID)
+	}
+	return nil
+}
+
 // IngestDocument 原基础文档接入接口
 func (e *VectorEngine) IngestDocument(ctx context.Context, tenantID, docID, title, sourceType, sourceURL, rawContent string) (*ragData.KnowledgeDocumentModel, error) {
 	docHash := CalculateContentHash([]byte(rawContent))

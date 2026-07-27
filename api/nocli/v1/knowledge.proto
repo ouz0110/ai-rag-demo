@@ -30,6 +30,21 @@ service KnowledgeBase {
       body: "*"
     };
   }
+
+  // 获取知识库文档列表 (纯查询 GET 接口)
+  rpc ListDocuments(ListDocumentsRequest) returns (ListDocumentsResponse) {
+    option (google.api.http) = {
+      get: "/nocli/v1/kb/doc/list"
+    };
+  }
+
+  // 删除文档及其关联切片 (POST 带 Body 参数)
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse) {
+    option (google.api.http) = {
+      post: "/nocli/v1/kb/doc/delete"
+      body: "*"
+    };
+  }
 }
 
 // 知识库信息结构
@@ -46,6 +61,26 @@ message KnowledgeBaseInfo {
   int64 created_at = 5;
   // 更新时间戳 (秒)
   int64 updated_at = 6;
+}
+
+// 文档详细信息结构
+message DocumentInfo {
+  string doc_id = 1;
+  string kb_id = 2;
+  string title = 3;
+  string source_type = 4;
+  string doc_version = 5;
+  string category = 6;
+  string tags = 7;
+  int32 is_active = 8;
+  string source_url = 9;
+  string file_path = 10;
+  string file_hash = 11;
+  int32 status = 12; // 0:待处理, 1:解析中, 2:已向量化, 3:失败
+  int32 total_chunks = 13;
+  string err_msg = 14;
+  int64 created_at = 15;
+  int64 updated_at = 16;
 }
 
 // 创建知识库请求
@@ -77,5 +112,25 @@ message DeleteKnowledgeBaseRequest {
 
 // 删除知识库响应
 message DeleteKnowledgeBaseResponse {
+  bool success = 1;
+}
+
+// 获取文档列表请求
+message ListDocumentsRequest {
+  string kb_id = 1;
+}
+
+// 获取文档列表响应
+message ListDocumentsResponse {
+  repeated DocumentInfo docs = 1;
+}
+
+// 删除文档请求
+message DeleteDocumentRequest {
+  string doc_id = 1 [(validate.rules).string.min_len = 1];
+}
+
+// 删除文档响应
+message DeleteDocumentResponse {
   bool success = 1;
 }

@@ -38,7 +38,7 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 
 	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "agent_name", ag.Name(), "model", ag.Model())
 
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, &messages, emitter)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, &messages, emitter)
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     sessionID,
@@ -103,7 +103,7 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 
 	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "agent_name", ag.Name(), "model", ag.Model())
 
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, &messages, emitter)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, &messages, emitter)
 	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

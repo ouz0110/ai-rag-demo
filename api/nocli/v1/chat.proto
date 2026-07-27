@@ -167,6 +167,8 @@ message CompletionRequest {
   string kb_tenant_id = 4;
   // 关联知识库ID标识 (可选。若不传或为空，服务端自动使用默认知识库 'kb_default_system')
   string kb_id = 5;
+  // 是否启用 RAG 知识库检索 (默认 false。仅在显式开启时才允许触发 RAG 检索)
+  bool enable_rag = 6;
 }
 
 // 恢复执行请求
@@ -187,6 +189,8 @@ message ResumeRequest {
   string kb_tenant_id = 7;
   // 关联知识库ID标识 (可选。若不传或为空，服务端自动使用默认知识库 'kb_default_system')
   string kb_id = 8;
+  // 是否启用 RAG 知识库检索 (默认 false)
+  bool enable_rag = 9;
 }
 
 // 会话概览信息

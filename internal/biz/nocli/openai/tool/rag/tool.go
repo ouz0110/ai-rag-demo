@@ -82,6 +82,11 @@ func (t *Tool) Definition() openai.Tool {
 }
 
 func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
+	// 【安全阀控制】：判断当前 Context 是否启用了 RAG 检索功能
+	if enableRAG, ok := ctx.Value("parent_enable_rag").(bool); ok && !enableRAG {
+		return "[RAG 提示] 当前对话会话未启用 RAG 知识库检索功能。请勿继续检索向量库，直接回答用户的问题或提示用户开启 RAG 检索开关。", nil
+	}
+
 	var args Args
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("RAG Tool 参数解析失败: %v", err)

@@ -156,3 +156,52 @@ func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, 
 
 	return docModel, nil
 }
+
+// ListDocuments 查询指定知识库 (或全量) 下的文档模型数据列表
+func (b *KBBiz) ListDocuments(ctx context.Context, kbID string) ([]*rag.KnowledgeDocumentModel, error) {
+	tenantID := vector.DefaultTenantID
+	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
+		tenantID = u.Openid
+	}
+
+	return b.ragRepo.ListDocumentsByKBID(ctx, tenantID, kbID)
+}
+
+// DeleteDocument 根据 docID 删除物理数据库与向量数据库中的切片与文档数据
+func (b *KBBiz) DeleteDocument(ctx context.Context, docID string) error {
+	tenantID := vector.DefaultTenantID
+	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
+		tenantID = u.Openid
+	}
+
+	doc, err := b.ragRepo.GetDocumentByDocID(ctx, tenantID, docID)
+	if err != nil || doc == nil {
+		return fmt.Errorf("document [%s] not found", docID)
+	}
+
+	// 1. 清理向量数据库 (Milvus) 中的向量切片
+	if b.vectorEngine != nil {
+		if err := b.vectorEngine.DeleteDocVectors(ctx, tenantID, docID); err != nil {
+			log.Warnf(ctx, "[DeleteDoc] Delete vectors failed for doc [%s]: %v", docID, err)
+		}
+	}
+
+	// 2. 清理 MySQL 中的 chunk 切片明细
+	if err := b.ragRepo.DeleteChunksByDocID(ctx, tenantID, docID); err != nil {
+		log.Warnf(ctx, "[DeleteDoc] Delete mysql chunks failed for doc [%s]: %v", docID, err)
+	}
+
+	// 3. 删除 MySQL 主文档记录
+	if err := b.ragRepo.DeleteDocument(ctx, tenantID, docID); err != nil {
+		return fmt.Errorf("delete document record failed: %w", err)
+	}
+
+	// 4. 若物理磁盘上保存有该文件，尝试同步清理
+	if doc.FilePath != "" {
+		if _, err := os.Stat(doc.FilePath); err == nil {
+			_ = os.Remove(doc.FilePath)
+		}
+	}
+
+	return nil
+}

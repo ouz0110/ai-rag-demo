@@ -12,10 +12,17 @@
         </div>
       </div>
 
-      <button @click="createNewChat" class="new-chat-btn">
-        <Plus :size="16" />
-        <span>发起新对话</span>
-      </button>
+      <div class="flex flex-col gap-2">
+        <button @click="createNewChat" class="new-chat-btn">
+          <Plus :size="16" />
+          <span>发起新对话</span>
+        </button>
+
+        <router-link to="/kb" class="kb-workbench-btn">
+          <Database :size="16" />
+          <span>知识库管理中心</span>
+        </router-link>
+      </div>
     </div>
 
     <!-- 中间：会话历史列表 -->
@@ -88,7 +95,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bot, Plus, MessageSquare, Trash2, LogOut, Loader2 } from 'lucide-vue-next';
+import { Bot, Plus, MessageSquare, Trash2, LogOut, Loader2, Database } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat';
 import { useUserStore } from '../../stores/user';
 import { SessionStatus } from '../../types/api';
@@ -230,6 +237,30 @@ async function handleLogout() {
   color: #ffffff;
   border-color: transparent;
   box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
+}
+
+.kb-workbench-btn {
+  width: 100%;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.kb-workbench-btn:hover {
+  background: rgba(6, 182, 212, 0.15);
+  border-color: rgba(6, 182, 212, 0.4);
+  color: #22d3ee;
 }
 
 /* 列表区 */

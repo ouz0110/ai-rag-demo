@@ -65,7 +65,7 @@ func NewChatBiz(
 	}
 }
 
-func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
 	if kbTenantID == "" {
 		kbTenantID = vector.DefaultTenantID
 	}
@@ -76,6 +76,7 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 		SessionID:  sessionID,
 		KBTenantID: kbTenantID,
 		KBID:       kbID,
+		EnableRAG:  enableRAG,
 		Messages:   *messages,
 		Appender: func(msgs []openai.ChatCompletionMessage) {
 			*messages = append(*messages, msgs...)
@@ -105,7 +106,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, &messages, nil)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -180,7 +181,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 
 	newMessageStart := len(messages)
 
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, &messages, nil)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

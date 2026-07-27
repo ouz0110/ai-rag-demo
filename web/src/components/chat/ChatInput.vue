@@ -26,9 +26,12 @@
 
       <!-- 底部工具与发送控制栏 -->
       <div class="card-footer">
-        <div class="sse-status">
-          <span class="status-dot"></span>
-          <span>SSE 流式响应就绪</span>
+        <div class="flex items-center gap-3">
+          <KBSelector />
+          <div class="sse-status">
+            <span class="status-dot"></span>
+            <span>SSE 流式响应就绪</span>
+          </div>
         </div>
 
         <div class="action-buttons">
@@ -60,6 +63,7 @@
 import { ref } from 'vue';
 import { Sparkles, Send, Square } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat';
+import KBSelector from '../KBSelector.vue';
 
 const chatStore = useChatStore();
 const inputContent = ref('');

@@ -3,6 +3,7 @@ import { ref } from 'vue';
 import { router } from '../router';
 import { chatApi } from '../api/chat';
 import { fetchSSE } from '../sse/sseClient';
+import { useKBStore } from './kb';
 import {
   SessionStatus,
   ResumeAction,
@@ -386,12 +387,17 @@ export const useChatStore = defineStore('chat', () => {
 
     abortController = new AbortController();
 
+    const kbStore = useKBStore();
+
     await fetchSSE({
       url: '/nocli/v1/stream/completion',
       body: {
         message: text,
         session_id: currentSessionId.value.startsWith('temp-') ? '' : currentSessionId.value,
         model: selectedModel.value,
+        kb_tenant_id: kbStore.activeKbTenantId,
+        kb_id: kbStore.activeKbId,
+        enable_rag: kbStore.enableRAG,
       },
       signal: abortController.signal,
       onChunk: (chunk: StreamChunk) => {
@@ -430,6 +436,8 @@ export const useChatStore = defineStore('chat', () => {
 
     abortController = new AbortController();
 
+    const kbStore = useKBStore();
+
     await fetchSSE({
       url: '/nocli/v1/stream/resume',
       body: {
@@ -439,6 +447,9 @@ export const useChatStore = defineStore('chat', () => {
         approve_scope: approveScope,
         reason,
         model: selectedModel.value,
+        kb_tenant_id: kbStore.activeKbTenantId,
+        kb_id: kbStore.activeKbId,
+        enable_rag: kbStore.enableRAG,
       },
       signal: abortController.signal,
       onChunk: (chunk: StreamChunk) => {

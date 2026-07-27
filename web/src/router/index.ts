@@ -3,6 +3,7 @@ import AuthView from '../views/AuthView.vue';
 import ChatLayout from '../views/ChatLayout.vue';
 import ChatIndex from '../views/ChatIndex.vue';
 import ChatView from '../views/ChatView.vue';
+import KBView from '../views/KBView.vue';
 
 const routes = [
   {
@@ -30,6 +31,11 @@ const routes = [
         name: 'ChatView',
         component: ChatView,
         props: true,
+      },
+      {
+        path: 'kb',
+        name: 'KBView',
+        component: KBView,
       },
     ],
   },

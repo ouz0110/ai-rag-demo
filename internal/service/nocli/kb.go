@@ -75,6 +75,51 @@ func (s *KBService) DeleteKnowledgeBase(ctx context.Context, req *pb.DeleteKnowl
 	}, nil
 }
 
+// ListDocuments 获取文档列表 Protobuf RPC / HTTP
+func (s *KBService) ListDocuments(ctx context.Context, req *pb.ListDocumentsRequest) (*pb.ListDocumentsResponse, error) {
+	docs, err := s.kbBiz.ListDocuments(ctx, req.KbId)
+	if err != nil {
+		return nil, err
+	}
+
+	list := make([]*pb.DocumentInfo, len(docs))
+	for i, d := range docs {
+		list[i] = &pb.DocumentInfo{
+			DocId:       d.DocID,
+			KbId:        d.KBID,
+			Title:       d.Title,
+			SourceType:  d.SourceType,
+			DocVersion:  d.DocVersion,
+			Category:    d.Category,
+			Tags:        d.Tags,
+			IsActive:    d.IsActive,
+			SourceUrl:   d.SourceURL,
+			FilePath:    d.FilePath,
+			FileHash:    d.FileHash,
+			Status:      d.Status,
+			TotalChunks: d.TotalChunks,
+			ErrMsg:      d.ErrMsg,
+			CreatedAt:   d.CreatedAt.Unix(),
+			UpdatedAt:   d.UpdatedAt.Unix(),
+		}
+	}
+
+	return &pb.ListDocumentsResponse{
+		Docs: list,
+	}, nil
+}
+
+// DeleteDocument 删除文档及其关联向量与切片 Protobuf RPC / HTTP
+func (s *KBService) DeleteDocument(ctx context.Context, req *pb.DeleteDocumentRequest) (*pb.DeleteDocumentResponse, error) {
+	if err := s.kbBiz.DeleteDocument(ctx, req.DocId); err != nil {
+		return nil, err
+	}
+
+	return &pb.DeleteDocumentResponse{
+		Success: true,
+	}, nil
+}
+
 // UploadFileHTTP 自定义 HTTP multipart 文件上传 Handler (保持独立处理)
 func (s *KBService) UploadFileHTTP(ctx transHttp.Context) error {
 	req := ctx.Request()

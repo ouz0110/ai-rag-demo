@@ -195,7 +195,19 @@ func (r *RAGRepo) ListAllDocuments(ctx context.Context, tenantID string) ([]*Kno
 	var docs []*KnowledgeDocumentModel
 	err := r.DocRepo.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
 		Where("tenant_id = ?", tenantID).
+		Order("id desc").
 		Find(&docs).Error
+	return docs, err
+}
+
+// ListDocumentsByKBID 按 KBID 查询文档列表 (若 kbID 为空则获取租户下全部文档)
+func (r *RAGRepo) ListDocumentsByKBID(ctx context.Context, tenantID, kbID string) ([]*KnowledgeDocumentModel, error) {
+	var docs []*KnowledgeDocumentModel
+	db := r.DocRepo.GormDB(ctx).Model(&KnowledgeDocumentModel{}).Where("tenant_id = ?", tenantID)
+	if kbID != "" {
+		db = db.Where("kb_id = ?", kbID)
+	}
+	err := db.Order("id desc").Find(&docs).Error
 	return docs, err
 }
 
