@@ -36,6 +36,7 @@ func (s *KBService) CreateKnowledgeBase(ctx context.Context, req *pb.CreateKnowl
 			IsDefault:   kbModel.IsDefault,
 			CreatedAt:   kbModel.CreatedAt.Unix(),
 			UpdatedAt:   kbModel.UpdatedAt.Unix(),
+			TenantId:    kbModel.TenantID,
 		},
 	}, nil
 }
@@ -56,6 +57,7 @@ func (s *KBService) ListKnowledgeBases(ctx context.Context, req *pb.ListKnowledg
 			IsDefault:   k.IsDefault,
 			CreatedAt:   k.CreatedAt.Unix(),
 			UpdatedAt:   k.UpdatedAt.Unix(),
+			TenantId:    k.TenantID,
 		}
 	}
 

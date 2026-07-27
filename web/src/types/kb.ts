@@ -3,7 +3,7 @@ export interface KnowledgeBase {
   name: string;
   description: string;
   is_default: boolean;
-  tenant_id?: string;
+  tenant_id: string;
   created_at: number;
   updated_at: number;
 }

@@ -1,6 +1,11 @@
 package rag
 
-import "time"
+import (
+	"context"
+	"time"
+
+	"ai-rag-demo/internal/pkg/database"
+)
 
 // KnowledgeChunkModel 知识库文档切片表结构模型 (用于存储 Parent 粗粒度上下文及切片映射)
 type KnowledgeChunkModel struct {
@@ -21,4 +26,55 @@ type KnowledgeChunkModel struct {
 
 func (m *KnowledgeChunkModel) TableName() string {
 	return "knowledge_chunks"
+}
+
+type ChunkRepo struct {
+	database.TableRepo[*KnowledgeChunkModel]
+}
+
+// BatchCreateChunks 批量保存文档切片与 Parent Chunk 上下文
+func (r *ChunkRepo) BatchCreateChunks(ctx context.Context, chunks []*KnowledgeChunkModel) error {
+	if len(chunks) == 0 {
+		return nil
+	}
+	return r.GormDB(ctx).Model(&KnowledgeChunkModel{}).CreateInBatches(chunks, 100).Error
+}
+
+// GetChunksByIDs 根据 ChunkID 列表获取完整的 Chunk 记录 (回查 Parent 块上下文)
+func (r *ChunkRepo) GetChunksByIDs(ctx context.Context, tenantID string, chunkIDs []string) ([]*KnowledgeChunkModel, error) {
+	if len(chunkIDs) == 0 {
+		return nil, nil
+	}
+	var chunks []*KnowledgeChunkModel
+	err := r.GormDB(ctx).Model(&KnowledgeChunkModel{}).
+		Where("tenant_id = ? AND chunk_id IN ?", tenantID, chunkIDs).
+		Find(&chunks).Error
+	return chunks, err
+}
+
+// GetParentChunksByParentIDs 根据 ParentID 获取 Parent 块详细文本
+func (r *ChunkRepo) GetParentChunksByParentIDs(ctx context.Context, tenantID string, parentIDs []string) (map[string]string, error) {
+	if len(parentIDs) == 0 {
+		return make(map[string]string), nil
+	}
+	var parents []*KnowledgeChunkModel
+	err := r.GormDB(ctx).Model(&KnowledgeChunkModel{}).
+		Where("tenant_id = ? AND chunk_id IN ?", tenantID, parentIDs).
+		Find(&parents).Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]string)
+	for _, p := range parents {
+		result[p.ChunkID] = p.Content
+	}
+	return result, nil
+}
+
+// DeleteChunksByDocID 根据 doc_id 删除该文档对应的全部 MySQL 块
+func (r *ChunkRepo) DeleteChunksByDocID(ctx context.Context, tenantID, docID string) error {
+	return r.GormDB(ctx).Model(&KnowledgeChunkModel{}).
+		Where("tenant_id = ? AND doc_id = ?", tenantID, docID).
+		Delete(&KnowledgeChunkModel{}).Error
 }

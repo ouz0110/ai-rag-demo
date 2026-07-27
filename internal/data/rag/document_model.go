@@ -1,6 +1,11 @@
 package rag
 
-import "time"
+import (
+	"context"
+	"time"
+
+	"ai-rag-demo/internal/pkg/database"
+)
 
 // KnowledgeDocumentModel 知识库主文档表结构模型
 type KnowledgeDocumentModel struct {
@@ -28,4 +33,88 @@ type KnowledgeDocumentModel struct {
 
 func (m *KnowledgeDocumentModel) TableName() string {
 	return "knowledge_documents"
+}
+
+type DocumentRepo struct {
+	database.TableRepo[*KnowledgeDocumentModel]
+}
+
+// CreateDocument 创建文档主记录
+func (r *DocumentRepo) CreateDocument(ctx context.Context, doc *KnowledgeDocumentModel) error {
+	return r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).Create(doc).Error
+}
+
+// GetDocumentByDocID 查询文档主记录
+func (r *DocumentRepo) GetDocumentByDocID(ctx context.Context, tenantID, docID string) (*KnowledgeDocumentModel, error) {
+	var doc KnowledgeDocumentModel
+	err := r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ? AND doc_id = ?", tenantID, docID).
+		First(&doc).Error
+	if err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
+// UpdateDocumentStatus 更新文档处理状态
+func (r *DocumentRepo) UpdateDocumentStatus(ctx context.Context, tenantID, docID string, status int32, totalChunks int32, errMsg string) error {
+	return r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ? AND doc_id = ?", tenantID, docID).
+		Updates(map[string]interface{}{
+			"status":       status,
+			"total_chunks": totalChunks,
+			"err_msg":      errMsg,
+		}).Error
+}
+
+// GetDocumentByFilePath 根据文件路径查询文档
+func (r *DocumentRepo) GetDocumentByFilePath(ctx context.Context, tenantID, filePath string) (*KnowledgeDocumentModel, error) {
+	var doc KnowledgeDocumentModel
+	err := r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ? AND file_path = ?", tenantID, filePath).
+		First(&doc).Error
+	if err != nil {
+		return nil, err
+	}
+	return &doc, nil
+}
+
+// DeleteDocument 根据 doc_id 删除文档主记录
+func (r *DocumentRepo) DeleteDocument(ctx context.Context, tenantID, docID string) error {
+	return r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ? AND doc_id = ?", tenantID, docID).
+		Delete(&KnowledgeDocumentModel{}).Error
+}
+
+// ListAllDocuments 获取指定租户下的全部文档
+func (r *DocumentRepo) ListAllDocuments(ctx context.Context, tenantID string) ([]*KnowledgeDocumentModel, error) {
+	var docs []*KnowledgeDocumentModel
+	err := r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ?", tenantID).
+		Order("id desc").
+		Find(&docs).Error
+	return docs, err
+}
+
+// ListDocumentsByKBID 按 KBID 查询文档列表 (若 kbID 为空则获取租户下全部文档)
+func (r *DocumentRepo) ListDocumentsByKBID(ctx context.Context, tenantID, kbID string) ([]*KnowledgeDocumentModel, error) {
+	var docs []*KnowledgeDocumentModel
+	db := r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).Where("tenant_id in (?)", []string{tenantID, DefaultTenantID})
+	if kbID != "" {
+		db = db.Where("kb_id = ?", kbID)
+	}
+	err := db.Order("id desc").Find(&docs).Error
+	return docs, err
+}
+
+// UpdateDocumentHash 更新文档的哈希与同步状态
+func (r *DocumentRepo) UpdateDocumentHash(ctx context.Context, tenantID, docID, fileHash string, status int32, totalChunks int32) error {
+	return r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ? AND doc_id = ?", tenantID, docID).
+		Updates(map[string]interface{}{
+			"file_hash":    fileHash,
+			"status":       status,
+			"total_chunks": totalChunks,
+			"err_msg":      "",
+		}).Error
 }

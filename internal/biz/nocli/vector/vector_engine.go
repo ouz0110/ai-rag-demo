@@ -18,6 +18,7 @@ import (
 	vectorData "ai-rag-demo/internal/biz/nocli/vector/store"
 	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
+	"ai-rag-demo/internal/data"
 	ragData "ai-rag-demo/internal/data/rag"
 	"ai-rag-demo/internal/pkg/log"
 
@@ -39,7 +40,7 @@ type RAGContext struct {
 type VectorEngine struct {
 	cfg             *conf.Config                // 系统配置句柄
 	vectorStore     vectorData.VectorStore      // 向量存储驱动接口 (Milvus / Qdrant)
-	ragRepo         *ragData.RAGRepo            // MySQL 文档与 Chunk 持久化仓库
+	allDB           *data.DB                    // MySQL 文档与 Chunk 持久化数据库集合
 	embedder        *embedder.Embedder          // 向量 Embedding 调度计算器
 	staticChunker   *chunker.ParentChildChunker // 静态父子切片算子
 	semanticChunker *chunker.SemanticChunker    // 两阶段语义感知动态切片算子
@@ -51,7 +52,7 @@ type VectorEngine struct {
 func NewVectorEngine(
 	cfg *conf.Config,
 	vectorStore vectorData.VectorStore,
-	ragRepo *ragData.RAGRepo,
+	ragDB *data.DB,
 ) *VectorEngine {
 	emb := embedder.NewEmbedder(cfg)
 	chk := chunker.NewStaticChunkerFromConfig(cfg)
@@ -63,7 +64,7 @@ func NewVectorEngine(
 	engine := &VectorEngine{
 		cfg:             cfg,
 		vectorStore:     vectorStore,
-		ragRepo:         ragRepo,
+		allDB:           ragDB,
 		embedder:        emb,
 		staticChunker:   chk,
 		semanticChunker: semChk,
@@ -116,7 +117,7 @@ func (e *VectorEngine) IngestFileIncremental(ctx context.Context, tenantID, kbID
 	collectionName := e.getCollectionName()
 
 	// 1. 检索数据库是否已存在该文件的记录
-	existingDoc, err := e.ragRepo.GetDocumentByFilePath(ctx, tenantID, absPath)
+	existingDoc, err := e.allDB.Rag.DocRepo.GetDocumentByFilePath(ctx, tenantID, absPath)
 	if err == nil && existingDoc != nil {
 		// 【防重复处理关键】：内容哈希一致，无变动 -> 跳过全量重新切片与向量化！
 		if existingDoc.FileHash == currentHash && existingDoc.Status == 2 {
@@ -134,7 +135,7 @@ func (e *VectorEngine) IngestFileIncremental(ctx context.Context, tenantID, kbID
 			}
 		}
 		// 清理 MySQL 旧块记录
-		if delErr := e.ragRepo.DeleteChunksByDocID(ctx, tenantID, existingDoc.DocID); delErr != nil {
+		if delErr := e.allDB.Rag.ChunkRepo.DeleteChunksByDocID(ctx, tenantID, existingDoc.DocID); delErr != nil {
 			log.Warnf(ctx, "Delete old mysql chunks for doc [%s] warn: %v", existingDoc.DocID, delErr)
 		}
 
@@ -159,7 +160,7 @@ func (e *VectorEngine) IngestFileIncremental(ctx context.Context, tenantID, kbID
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	if err := e.ragRepo.CreateDocument(ctx, newDoc); err != nil {
+	if err := e.allDB.Rag.DocRepo.CreateDocument(ctx, newDoc); err != nil {
 		return nil, fmt.Errorf("create new document record failed: %w", err)
 	}
 
@@ -232,8 +233,8 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		})
 	}
 
-	if err := e.ragRepo.BatchCreateChunks(ctx, chunkModels); err != nil {
-		_ = e.ragRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
+	if err := e.allDB.Rag.ChunkRepo.BatchCreateChunks(ctx, chunkModels); err != nil {
+		_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
 		return nil, fmt.Errorf("batch save chunks error: %w", err)
 	}
 
@@ -245,7 +246,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 
 	vectors, err := e.embedder.BatchGenerateEmbeddings(ctx, childTexts)
 	if err != nil {
-		_ = e.ragRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
+		_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
 		return nil, fmt.Errorf("generate embeddings error: %w", err)
 	}
 
@@ -277,13 +278,13 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		}
 		_ = e.vectorStore.CreateCollection(ctx, collectionName, dim)
 		if err := e.vectorStore.Upsert(ctx, collectionName, vecDocs); err != nil {
-			_ = e.ragRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
+			_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
 			return nil, fmt.Errorf("upsert vector store error: %w", err)
 		}
 	}
 
 	// 更新 Hash 与状态
-	_ = e.ragRepo.UpdateDocumentHash(ctx, doc.TenantID, doc.DocID, contentHash, 2, int32(totalChunks))
+	_ = e.allDB.Rag.DocRepo.UpdateDocumentHash(ctx, doc.TenantID, doc.DocID, contentHash, 2, int32(totalChunks))
 	doc.FileHash = contentHash
 	doc.Status = 2
 	doc.TotalChunks = int32(totalChunks)
@@ -336,18 +337,17 @@ func (e *VectorEngine) AutoReloadKnowledgeBase(ctx context.Context) {
 	}
 
 	// 【清理失效文件】：对比数据库与磁盘，若文件已被删除，清理对应的物理数据库与向量 chunk
-	existingDocs, err := e.ragRepo.ListAllDocuments(ctx, tenantID)
-	if err == nil {
-		collectionName := e.getCollectionName()
-		for _, d := range existingDocs {
-			if d.FilePath != "" && !foundFiles[d.FilePath] {
-				log.Infof(ctx, "[AutoReload] Purging deleted file record [%s] (DocID: %s)", d.FilePath, d.DocID)
-				if e.vectorStore != nil {
-					_ = e.vectorStore.DeleteByDocID(ctx, collectionName, tenantID, d.DocID)
-				}
-				_ = e.ragRepo.DeleteChunksByDocID(ctx, tenantID, d.DocID)
-				_ = e.ragRepo.DeleteDocument(ctx, tenantID, d.DocID)
-			}
+	existingDocs, err := e.allDB.Rag.DocRepo.ListAllDocuments(ctx, tenantID)
+	if err != nil {
+		return
+	}
+
+	for _, d := range existingDocs {
+		if _, err := os.Stat(d.FilePath); os.IsNotExist(err) {
+			log.Infof(ctx, "[AutoReload] Clean obsolete document: %s (DocID: %s)", d.FilePath, d.DocID)
+			_ = e.DeleteDocVectors(ctx, tenantID, d.DocID)
+			_ = e.allDB.Rag.ChunkRepo.DeleteChunksByDocID(ctx, tenantID, d.DocID)
+			_ = e.allDB.Rag.DocRepo.DeleteDocument(ctx, tenantID, d.DocID)
 		}
 	}
 
@@ -387,7 +387,7 @@ func (e *VectorEngine) IngestDocument(ctx context.Context, tenantID, docID, titl
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
 	}
-	if err := e.ragRepo.CreateDocument(ctx, docModel); err != nil {
+	if err := e.allDB.Rag.DocRepo.CreateDocument(ctx, docModel); err != nil {
 		return nil, fmt.Errorf("save document record error: %w", err)
 	}
 
@@ -495,7 +495,7 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		}
 	}
 
-	parentMap, err := e.ragRepo.GetParentChunksByParentIDs(ctx, tenantID, parentIDs)
+	parentMap, err := e.allDB.Rag.ChunkRepo.GetParentChunksByParentIDs(ctx, tenantID, parentIDs)
 	if err != nil {
 		log.Warnf(ctx, "Fetch parent chunks from mysql error: %v", err)
 		parentMap = make(map[string]string)

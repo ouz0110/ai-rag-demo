@@ -147,6 +147,10 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	// 3. 结果格式化输出给 LLM
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("=== RAG 知识库检索结果 ===\n"))
+	if kbName, ok := ctx.Value("parent_kb_name").(string); ok && kbName != "" {
+		kbDesc, _ := ctx.Value("parent_kb_description").(string)
+		sb.WriteString(fmt.Sprintf("【目标知识库】: %s (%s)\n", kbName, kbDesc))
+	}
 	sb.WriteString(fmt.Sprintf("【原始输入查询】: %s\n", rawQuery))
 	sb.WriteString(fmt.Sprintf("【转换后的标准 RAG 问题】: %s\n", strings.Join(standardQueries, " | ")))
 	sb.WriteString(fmt.Sprintf("【召回切片数量】: %d 条\n\n", len(ragContexts)))

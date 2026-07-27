@@ -20,18 +20,18 @@ import (
 // KBBiz 知识库管理与自主文件上传业务 Logic
 type KBBiz struct {
 	cfg          *conf.Config
-	ragRepo      *rag.RAGRepo
+	ragDB        *rag.DB
 	vectorEngine *vector.VectorEngine
 }
 
 func NewKBBiz(
 	cfg *conf.Config,
-	ragRepo *rag.RAGRepo,
+	ragDB *rag.DB,
 	vectorEngine *vector.VectorEngine,
 ) *KBBiz {
 	return &KBBiz{
 		cfg:          cfg,
-		ragRepo:      ragRepo,
+		ragDB:        ragDB,
 		vectorEngine: vectorEngine,
 	}
 }
@@ -54,7 +54,7 @@ func (b *KBBiz) CreateKnowledgeBase(ctx context.Context, name, description strin
 		UpdatedAt:   time.Now(),
 	}
 
-	if err := b.ragRepo.CreateKnowledgeBase(ctx, kbModel); err != nil {
+	if err := b.ragDB.KBRepo.CreateKnowledgeBase(ctx, kbModel); err != nil {
 		return nil, fmt.Errorf("create knowledge base error: %w", err)
 	}
 
@@ -69,9 +69,9 @@ func (b *KBBiz) ListKnowledgeBases(ctx context.Context) ([]*rag.KnowledgeBaseMod
 	}
 
 	// 确保租户下的默认知识库已初始化
-	defaultKB, _ := b.ragRepo.GetDefaultKnowledgeBase(ctx, vector.DefaultTenantID)
+	defaultKB, _ := b.ragDB.KBRepo.GetDefaultKnowledgeBase(ctx, vector.DefaultTenantID)
 
-	kbs, err := b.ragRepo.ListKnowledgeBases(ctx, tenantID)
+	kbs, err := b.ragDB.KBRepo.ListKnowledgeBases(ctx, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -90,7 +90,7 @@ func (b *KBBiz) DeleteKnowledgeBase(ctx context.Context, kbID string) error {
 		tenantID = u.Openid
 	}
 
-	kb, err := b.ragRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
+	kb, err := b.ragDB.KBRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
 	if err != nil {
 		return fmt.Errorf("knowledge base [%s] not found", kbID)
 	}
@@ -99,7 +99,7 @@ func (b *KBBiz) DeleteKnowledgeBase(ctx context.Context, kbID string) error {
 		return fmt.Errorf("system default knowledge base cannot be deleted")
 	}
 
-	if err := b.ragRepo.DeleteKnowledgeBase(ctx, tenantID, kbID); err != nil {
+	if err := b.ragDB.KBRepo.DeleteKnowledgeBase(ctx, tenantID, kbID); err != nil {
 		return fmt.Errorf("delete knowledge base failed: %w", err)
 	}
 
@@ -117,7 +117,7 @@ func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, 
 		return nil, fmt.Errorf("knowledge base id is empty")
 	}
 	// 校验指定 KB 存在性
-	_, err := b.ragRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
+	_, err := b.ragDB.KBRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge base [%s] not found: %v", kbID, err)
 	}
@@ -165,7 +165,7 @@ func (b *KBBiz) ListDocuments(ctx context.Context, kbID string) ([]*rag.Knowledg
 		tenantID = u.Openid
 	}
 
-	return b.ragRepo.ListDocumentsByKBID(ctx, tenantID, kbID)
+	return b.ragDB.DocRepo.ListDocumentsByKBID(ctx, tenantID, kbID)
 }
 
 // DeleteDocument 根据 docID 删除物理数据库与向量数据库中的切片与文档数据
@@ -175,7 +175,7 @@ func (b *KBBiz) DeleteDocument(ctx context.Context, docID string) error {
 		tenantID = u.Openid
 	}
 
-	doc, err := b.ragRepo.GetDocumentByDocID(ctx, tenantID, docID)
+	doc, err := b.ragDB.DocRepo.GetDocumentByDocID(ctx, tenantID, docID)
 	if err != nil || doc == nil {
 		return fmt.Errorf("document [%s] not found", docID)
 	}
@@ -188,12 +188,12 @@ func (b *KBBiz) DeleteDocument(ctx context.Context, docID string) error {
 	}
 
 	// 2. 清理 MySQL 中的 chunk 切片明细
-	if err := b.ragRepo.DeleteChunksByDocID(ctx, tenantID, docID); err != nil {
+	if err := b.ragDB.ChunkRepo.DeleteChunksByDocID(ctx, tenantID, docID); err != nil {
 		log.Warnf(ctx, "[DeleteDoc] Delete mysql chunks failed for doc [%s]: %v", docID, err)
 	}
 
 	// 3. 删除 MySQL 主文档记录
-	if err := b.ragRepo.DeleteDocument(ctx, tenantID, docID); err != nil {
+	if err := b.ragDB.DocRepo.DeleteDocument(ctx, tenantID, docID); err != nil {
 		return fmt.Errorf("delete document record failed: %w", err)
 	}
 

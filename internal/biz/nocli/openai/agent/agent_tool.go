@@ -78,10 +78,16 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		}
 	}
 
+	systemPrompt := t.targetAgent.SystemPrompt(".", nil)
+	if kbName, ok := ctx.Value(base.ParentKBNameKey).(string); ok && kbName != "" {
+		kbDesc, _ := ctx.Value(base.ParentKBDescriptionKey).(string)
+		systemPrompt += fmt.Sprintf("\n\n【当前目标知识库配置与范畴】\n- 知识库名称：%s\n- 知识库描述：%s\n请务必评估用户提问与该知识库范畴的关联性。若关联，请先使用 rag_search 进行检索；若检索无相关内容或问题与知识库范畴无关，请客观明确告知用户。", kbName, kbDesc)
+	}
+
 	subMessages = append([]openai.ChatCompletionMessage{
 		{
 			Role:    openai.ChatMessageRoleSystem,
-			Content: t.targetAgent.SystemPrompt(".", nil),
+			Content: systemPrompt,
 		},
 	}, subMessages...)
 

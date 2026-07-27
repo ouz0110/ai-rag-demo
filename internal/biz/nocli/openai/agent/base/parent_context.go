@@ -9,23 +9,27 @@ import (
 type ParentContextKey string
 
 const (
-	ParentSessionIDKey  ParentContextKey = "parent_session_id"
-	ParentMessagesKey   ParentContextKey = "parent_messages"
-	ParentAppenderKey   ParentContextKey = "parent_messages_appender"
-	ParentEmitterKey    ParentContextKey = "parent_emitter"
-	ParentKBTenantIDKey ParentContextKey = "parent_kb_tenant_id"
-	ParentKBIDKey       ParentContextKey = "parent_kb_id"
-	ParentEnableRAGKey  ParentContextKey = "parent_enable_rag"
+	ParentSessionIDKey     ParentContextKey = "parent_session_id"
+	ParentMessagesKey      ParentContextKey = "parent_messages"
+	ParentAppenderKey      ParentContextKey = "parent_messages_appender"
+	ParentEmitterKey       ParentContextKey = "parent_emitter"
+	ParentKBTenantIDKey    ParentContextKey = "parent_kb_tenant_id"
+	ParentKBIDKey          ParentContextKey = "parent_kb_id"
+	ParentEnableRAGKey     ParentContextKey = "parent_enable_rag"
+	ParentKBNameKey        ParentContextKey = "parent_kb_name"
+	ParentKBDescriptionKey ParentContextKey = "parent_kb_description"
 )
 
 type ParentContext struct {
-	SessionID  string
-	KBTenantID string
-	KBID       string
-	EnableRAG  bool
-	Messages   []openai.ChatCompletionMessage
-	Appender   func([]openai.ChatCompletionMessage)
-	Emitter    StreamEmitter
+	SessionID     string
+	KBTenantID    string
+	KBID          string
+	KBName        string
+	KBDescription string
+	EnableRAG     bool
+	Messages      []openai.ChatCompletionMessage
+	Appender      func([]openai.ChatCompletionMessage)
+	Emitter       StreamEmitter
 }
 
 func (pc *ParentContext) Inject(ctx context.Context) context.Context {
@@ -38,6 +42,12 @@ func (pc *ParentContext) Inject(ctx context.Context) context.Context {
 	}
 	if pc.KBID != "" {
 		ctx = context.WithValue(ctx, ParentKBIDKey, pc.KBID)
+	}
+	if pc.KBName != "" {
+		ctx = context.WithValue(ctx, ParentKBNameKey, pc.KBName)
+	}
+	if pc.KBDescription != "" {
+		ctx = context.WithValue(ctx, ParentKBDescriptionKey, pc.KBDescription)
 	}
 	if pc.Emitter != nil {
 		ctx = context.WithValue(ctx, ParentEmitterKey, pc.Emitter)

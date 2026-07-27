@@ -11,12 +11,13 @@ import (
 
 var ProviderSet = wire.NewSet(
 	NewAllDB,
-	NewRAGRepoFromAllDB,
+	NewRAGDBFromAllDB,
 )
 
 type DB struct {
 	cfg  *conf.Config
 	Base *base.DB
+	Rag  *rag.DB
 }
 
 func NewAllDB(
@@ -25,12 +26,13 @@ func NewAllDB(
 	return &DB{
 		cfg:  c,
 		Base: base.NewDB(c),
+		Rag:  rag.NewDB(c),
 	}
 }
 
-func NewRAGRepoFromAllDB(allDb *DB) *rag.RAGRepo {
-	if allDb == nil || allDb.Base == nil {
+func NewRAGDBFromAllDB(allDb *DB) *rag.DB {
+	if allDb == nil {
 		return nil
 	}
-	return rag.NewRAGRepo(allDb.Base.DB)
+	return allDb.Rag
 }

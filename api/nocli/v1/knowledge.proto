@@ -61,6 +61,8 @@ message KnowledgeBaseInfo {
   int64 created_at = 5;
   // 更新时间戳 (秒)
   int64 updated_at = 6;
+  // 租户 ID
+  string tenant_id = 7;
 }
 
 // 文档详细信息结构

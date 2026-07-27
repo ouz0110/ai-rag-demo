@@ -65,6 +65,23 @@ func NewChatBiz(
 	}
 }
 
+func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string, string) {
+	if s.allDb == nil || s.allDb.Rag == nil {
+		return "", ""
+	}
+	if kbID != "" {
+		kb, err := s.allDb.Rag.KBRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
+		if err == nil && kb != nil {
+			return kb.Name, kb.Description
+		}
+	}
+	defaultKB, err := s.allDb.Rag.KBRepo.GetDefaultKnowledgeBase(ctx, tenantID)
+	if err == nil && defaultKB != nil {
+		return defaultKB.Name, defaultKB.Description
+	}
+	return "", ""
+}
+
 func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
 	if kbTenantID == "" {
 		kbTenantID = vector.DefaultTenantID
@@ -72,12 +89,20 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 	if kbID == "" {
 		kbID = vector.DefaultKBID
 	}
+
+	var kbName, kbDesc string
+	if enableRAG {
+		kbName, kbDesc = s.getKBInfo(ctx, kbTenantID, kbID)
+	}
+
 	pc := &agentbase.ParentContext{
-		SessionID:  sessionID,
-		KBTenantID: kbTenantID,
-		KBID:       kbID,
-		EnableRAG:  enableRAG,
-		Messages:   *messages,
+		SessionID:     sessionID,
+		KBTenantID:    kbTenantID,
+		KBID:          kbID,
+		KBName:        kbName,
+		KBDescription: kbDesc,
+		EnableRAG:     enableRAG,
+		Messages:      *messages,
 		Appender: func(msgs []openai.ChatCompletionMessage) {
 			*messages = append(*messages, msgs...)
 		},
