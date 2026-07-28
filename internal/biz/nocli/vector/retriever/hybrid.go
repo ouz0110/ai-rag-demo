@@ -3,9 +3,11 @@ package retriever
 import (
 	"context"
 	"sort"
-	"strings"
 
 	vectorData "ai-rag-demo/internal/biz/nocli/vector/store"
+	"ai-rag-demo/internal/common"
+	"ai-rag-demo/internal/pkg/log"
+	"sync"
 )
 
 // ScoredChunk 混合检索融合得分后的切片实体
@@ -31,25 +33,67 @@ func NewHybridRetriever(vectorStore vectorData.VectorStore) *HybridRetriever {
 	}
 }
 
-// Retrieve 结合 Dense 向量检索与 Sparse 关键词检索进行 RRF 得分融合
+// Retrieve 结合 Dense 向量检索与 Sparse 关键词检索进行并发双路召回与 RRF 得分融合
 func (r *HybridRetriever) Retrieve(ctx context.Context, collectionName string, query *vectorData.SearchQuery, queryText string) ([]*ScoredChunk, error) {
-	// 1. 执行 Dense Vector 检索
-	vectorResults, err := r.vectorStore.Search(ctx, collectionName, query)
-	if err != nil {
-		return nil, err
+	var denseResults []*vectorData.VectorSearchResult
+	var sparseResults []*vectorData.VectorSearchResult
+	var denseErr, sparseErr error
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// 路 1: 并发执行 Dense Vector 向量语义检索 (遵守安全协程规范)
+	common.RunInGoroutine(ctx, func(gCtx context.Context) {
+		defer wg.Done()
+		denseResults, denseErr = r.vectorStore.Search(gCtx, collectionName, query)
+	})
+
+	// 路 2: 并发执行 Sparse Text 文本关键词精确匹配检索 (遵守安全协程规范)
+	common.RunInGoroutine(ctx, func(gCtx context.Context) {
+		defer wg.Done()
+		topK := 10
+		tenantID := ""
+		if query != nil {
+			topK = query.TopK
+			tenantID = query.TenantID
+		}
+		sparseResults, sparseErr = r.vectorStore.SearchText(gCtx, collectionName, tenantID, queryText, topK)
+	})
+
+	wg.Wait()
+
+	if denseErr != nil {
+		return nil, denseErr
+	}
+	if sparseErr != nil {
+		log.Warnf(ctx, "Sparse search warning: %v, fallback to dense results", sparseErr)
 	}
 
 	// 2. RRF (Reciprocal Rank Fusion) 排名融合算法
 	rrfScores := make(map[string]float32)
 	chunkMap := make(map[string]*vectorData.VectorSearchResult)
 
-	// 处理 Vector 检索 Rank
-	for rank, item := range vectorResults {
+	// 融合路 1: Dense Vector 检索 Rank 得分
+	for rank, item := range denseResults {
+		if item == nil || item.ID == "" {
+			continue
+		}
 		chunkMap[item.ID] = item
 		rrfScores[item.ID] += 1.0 / (r.kConstant + float32(rank+1))
 	}
 
-	// 3. 将 RRF 得分倒序排序
+	// 融合路 2: Sparse Text 关键词检索 Rank 得分
+	for rank, item := range sparseResults {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		if _, ok := chunkMap[item.ID]; !ok {
+			chunkMap[item.ID] = item
+		}
+		rrfScores[item.ID] += 1.0 / (r.kConstant + float32(rank+1))
+	}
+
+	// 3. 将 RRF 综合得分倒序排序
 	type rrfItem struct {
 		id    string
 		score float32
@@ -63,7 +107,7 @@ func (r *HybridRetriever) Retrieve(ctx context.Context, collectionName string, q
 		return rrfList[i].score > rrfList[j].score
 	})
 
-	// 4. 组装最终召回结果
+	// 4. 组装双路融合后的最终召回结果
 	finalChunks := make([]*ScoredChunk, 0, len(rrfList))
 	for _, item := range rrfList {
 		raw := chunkMap[item.id]
@@ -72,11 +116,6 @@ func (r *HybridRetriever) Retrieve(ctx context.Context, collectionName string, q
 			if pid, ok := raw.Metadata["parent_id"].(string); ok {
 				parentID = pid
 			}
-		}
-
-		// 若 ID 是父子块前缀格式 (c_xxx)
-		if parentID == "" && strings.HasPrefix(raw.ID, "c_") {
-			// 从 ID 抽取或从 Metadata 提取
 		}
 
 		finalChunks = append(finalChunks, &ScoredChunk{

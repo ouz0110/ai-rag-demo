@@ -42,4 +42,5 @@ type VectorStore interface {
 	BatchDelete(ctx context.Context, collectionName string, ids []string) error
 	DeleteByDocID(ctx context.Context, collectionName string, tenantID, docID string) error
 	Search(ctx context.Context, collectionName string, query *SearchQuery) ([]*VectorSearchResult, error)
+	SearchText(ctx context.Context, collectionName string, tenantID, queryText string, topK int) ([]*VectorSearchResult, error)
 }

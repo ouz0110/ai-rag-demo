@@ -341,6 +341,120 @@ func (a *milvusAdapter) Search(ctx context.Context, collectionName string, query
 	return results, nil
 }
 
+// SearchText 基于文本关键词提取与 Milvus 标量过滤表达式进行 Sparse 文本检索
+func (a *milvusAdapter) SearchText(ctx context.Context, collectionName string, tenantID, queryText string, topK int) ([]*VectorSearchResult, error) {
+	if collectionName == "" {
+		collectionName = a.cfg.CollectionName
+	}
+	queryText = strings.TrimSpace(queryText)
+	if queryText == "" {
+		return nil, nil
+	}
+	if topK <= 0 {
+		topK = 10
+	}
+
+	// 1. 简易精准关键词提取 (按空格/特殊标点拆词并保留有意义字符)
+	keywords := extractKeywords(queryText)
+	if len(keywords) == 0 {
+		return nil, nil
+	}
+
+	// 2. 构造 Milvus 标量字符匹配表达式: (content like "%kw1%" || content like "%kw2%") && is_active == 1
+	likeExprs := make([]string, 0, len(keywords))
+	for _, kw := range keywords {
+		safeKw := strings.ReplaceAll(kw, "'", "\\'")
+		likeExprs = append(likeExprs, fmt.Sprintf("content like '%%%s%%'", safeKw))
+	}
+
+	filterExpr := fmt.Sprintf("(%s)", strings.Join(likeExprs, " || "))
+	if tenantID != "" {
+		filterExpr = fmt.Sprintf("tenant_id == '%s' && %s", tenantID, filterExpr)
+	}
+	filterExpr = fmt.Sprintf("%s && is_active == 1", filterExpr)
+
+	outputFields := []string{"id", "doc_id", "parent_id", "tenant_id", "kb_id", "is_active", "content"}
+
+	// 3. 执行 Milvus 标量 Query 检索
+	queryRes, err := a.cli.Query(ctx, collectionName, []string{}, filterExpr, outputFields)
+	if err != nil {
+		log.Warnf(ctx, "Milvus Sparse text query warning: %v, expr: %s", err, filterExpr)
+		return nil, nil
+	}
+
+	if queryRes == nil || queryRes.Len() == 0 {
+		return nil, nil
+	}
+
+	results := make([]*VectorSearchResult, 0, queryRes.Len())
+	idCol, _ := queryRes.GetColumn("id").(*entity.ColumnVarChar)
+	docIDCol, _ := queryRes.GetColumn("doc_id").(*entity.ColumnVarChar)
+	parentIDCol, _ := queryRes.GetColumn("parent_id").(*entity.ColumnVarChar)
+	contentCol, _ := queryRes.GetColumn("content").(*entity.ColumnVarChar)
+
+	totalRows := queryRes.Len()
+	if totalRows > topK {
+		totalRows = topK
+	}
+
+	for i := 0; i < totalRows; i++ {
+		idStr := ""
+		if idCol != nil {
+			idStr, _ = idCol.ValueByIdx(i)
+		}
+		docIDStr := ""
+		if docIDCol != nil {
+			docIDStr, _ = docIDCol.ValueByIdx(i)
+		}
+		parentIDStr := ""
+		if parentIDCol != nil {
+			parentIDStr, _ = parentIDCol.ValueByIdx(i)
+		}
+		contentStr := ""
+		if contentCol != nil {
+			contentStr, _ = contentCol.ValueByIdx(i)
+		}
+
+		hitCount := 0
+		for _, kw := range keywords {
+			if strings.Contains(strings.ToLower(contentStr), strings.ToLower(kw)) {
+				hitCount++
+			}
+		}
+		sparseScore := float32(hitCount) / float32(len(keywords))
+
+		results = append(results, &VectorSearchResult{
+			ID:      idStr,
+			DocID:   docIDStr,
+			Score:   sparseScore,
+			Content: contentStr,
+			Metadata: map[string]interface{}{
+				"parent_id": parentIDStr,
+			},
+		})
+	}
+
+	return results, nil
+}
+
+func extractKeywords(text string) []string {
+	f := func(c rune) bool {
+		return c == ' ' || c == ',' || c == '。' || c == '，' || c == '？' || c == '！' || c == '?' || c == '!' || c == ':' || c == '：' || c == '\n' || c == '\t'
+	}
+	rawWords := strings.FieldsFunc(text, f)
+	keywords := make([]string, 0)
+	for _, w := range rawWords {
+		w = strings.TrimSpace(w)
+		if len([]rune(w)) >= 2 {
+			keywords = append(keywords, w)
+		}
+	}
+	if len(keywords) == 0 && len(text) > 0 {
+		keywords = append(keywords, text)
+	}
+	return keywords
+}
+
 func formatStringSlice(slice []string) string {
 	res := "["
 	for i, s := range slice {

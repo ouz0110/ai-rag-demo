@@ -198,8 +198,10 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 	}
 	totalChunks := len(splitRes.ChildChunks)
 
-	// 构造 MySQL 块 (纯正文内容，附带 H1~H3, 行号, 表格/代码块标记, 切片 SHA256 Hash 与类型)
-	chunkModels := make([]*ragData.KnowledgeChunkModel, 0, len(splitRes.ParentChunks)+len(splitRes.ChildChunks))
+	// 构造 MySQL 块 (仅仅落盘 Parent 粗粒度上下文正文，彻底不落盘 Child 碎片，极度瘦身 MySQL 存储)
+	chunkModels := make([]*ragData.KnowledgeChunkModel, 0, len(splitRes.ParentChunks))
+	parentIDSet := make(map[string]bool)
+
 	for _, p := range splitRes.ParentChunks {
 		pHash := CalculateContentHash([]byte(p.Content))
 		cType := p.ChunkType
@@ -226,33 +228,38 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 			VectorStatus: 0,
 			IsActive:     1,
 		})
+		parentIDSet[p.ChunkID] = true
 	}
+
+	// 严谨容灾兜底：若某些 Child 块无对应 Parent (如静态切片)，提升其为 Self-Parent 存入 MySQL
 	for _, c := range splitRes.ChildChunks {
-		cHash := CalculateContentHash([]byte(c.Content))
-		cType := c.ChunkType
-		if cType == "" {
-			cType = "text"
+		if c.ParentID == "" {
+			c.ParentID = c.ChunkID
 		}
-		chunkModels = append(chunkModels, &ragData.KnowledgeChunkModel{
-			TenantID:     doc.TenantID,
-			DocID:        doc.DocID,
-			ChunkID:      c.ChunkID,
-			ParentID:     c.ParentID,
-			H1:           c.H1,
-			H2:           c.H2,
-			H3:           c.H3,
-			StartLine:    c.StartLine,
-			EndLine:      c.EndLine,
-			HasTable:     c.HasTable,
-			HasCode:      c.HasCode,
-			ChunkIndex:   c.ChunkIndex,
-			ChunkHash:    cHash,
-			ChunkType:    cType,
-			Content:      c.Content,
-			TokenCount:   c.TokenCount,
-			VectorStatus: 1,
-			IsActive:     1,
-		})
+		if !parentIDSet[c.ParentID] {
+			cHash := CalculateContentHash([]byte(c.Content))
+			chunkModels = append(chunkModels, &ragData.KnowledgeChunkModel{
+				TenantID:     doc.TenantID,
+				DocID:        doc.DocID,
+				ChunkID:      c.ParentID,
+				ParentID:     "",
+				H1:           c.H1,
+				H2:           c.H2,
+				H3:           c.H3,
+				StartLine:    c.StartLine,
+				EndLine:      c.EndLine,
+				HasTable:     c.HasTable,
+				HasCode:      c.HasCode,
+				ChunkIndex:   c.ChunkIndex,
+				ChunkHash:    cHash,
+				ChunkType:    "parent",
+				Content:      c.Content,
+				TokenCount:   c.TokenCount,
+				VectorStatus: 0,
+				IsActive:     1,
+			})
+			parentIDSet[c.ParentID] = true
+		}
 	}
 
 	if err := e.allDB.Rag.ChunkRepo.BatchCreateChunks(ctx, chunkModels); err != nil {
@@ -260,7 +267,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		return nil, fmt.Errorf("batch save chunks error: %w", err)
 	}
 
-	// 向量化 Child Chunks (采用纯正文生成 Embeddings)
+	// 向量化 Child Chunks (仅用于生成 Embeddings 存入 Milvus)
 	childTexts := make([]string, len(splitRes.ChildChunks))
 	for i, c := range splitRes.ChildChunks {
 		childTexts[i] = c.Content
@@ -272,7 +279,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		return nil, fmt.Errorf("generate embeddings error: %w", err)
 	}
 
-	// 构建 Pure Index 模式的 VectorDocument (Milvus 不存冗余文本，只存 Vector 与核心标量 ID)
+	// 构建 VectorDocument (Milvus 存储 Child 纯正文、Vector 向量及其对应的 parent_id 路由标量，完美支持后续混合检索与 BM25 匹配)
 	vecDocs := make([]*vectorData.VectorDocument, len(splitRes.ChildChunks))
 	for i, c := range splitRes.ChildChunks {
 		vecDocs[i] = &vectorData.VectorDocument{
@@ -280,7 +287,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 			DocID:    doc.DocID,
 			TenantID: doc.TenantID,
 			Vector:   vectors[i],
-			Content:  c.Content,
+			Content:  c.Content, // 存入 Child 纯正文 (无前缀)，支持 BM25 混合检索与全文匹配
 			Metadata: map[string]interface{}{
 				"parent_id":   c.ParentID,
 				"doc_id":      doc.DocID,
@@ -416,7 +423,7 @@ func (e *VectorEngine) IngestDocument(ctx context.Context, tenantID, docID, titl
 	return e.processAndSaveDocument(ctx, docModel, rawContent, docHash, "", e.getCollectionName())
 }
 
-// RetrieveContext 执行生产级混合检索、Pure Index 回查、Rerank 二次精排与方案 B 动态 Prompt 前缀组装
+// RetrieveContext 极简 RAG 在线检索路径：Milvus Pure Index 向量召回 -> parent_id 顺序去重 -> MySQL 批量回查 Parent 上下文 -> Parent 块 Rerank -> 方案 B 动态 Prompt 组装
 func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText string, topK int) ([]*RAGContext, error) {
 	if tenantID == "" || queryText == "" {
 		return nil, fmt.Errorf("empty query params")
@@ -448,16 +455,16 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		return nil, fmt.Errorf("generate query embedding failed: %w", err)
 	}
 
-	// 2. 构建向量检索请求 (自动带上 OnlyActive: true 过滤掉被作废或失效的切片)
+	// 2. 构建向量检索请求 (扩大 TopK 放大系数为 4x，防止 parent_id 去重后候选数量不足)
 	searchQuery := &vectorData.SearchQuery{
 		TenantID:   tenantID,
 		Vector:     queryVec,
-		TopK:       topK * 2,
+		TopK:       topK * 4,
 		MinScore:   scoreThreshold,
 		OnlyActive: true,
 	}
 
-	// 3. 执行 Hybrid Retriever 召回 (Milvus 检索阶段只返回 ChunkID 与 ParentID 索引，不传输大文本)
+	// 3. 执行 Milvus 向量检索 (仅从 Milvus 拿到 ChildChunkID, DocID, ParentID 标量)
 	scoredChunks, err := e.retriever.Retrieve(retCtx, collectionName, searchQuery, queryText)
 	if err != nil {
 		log.Warnf(ctx, "Hybrid retrieval failed or timed out: %v", err)
@@ -468,88 +475,50 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		return nil, nil
 	}
 
-	// 4. 【Pure Index 模式】：根据检索出的 ChunkID 列表，从 MySQL 批量回查 Child 块纯正文与标题元数据
-	childIDs := make([]string, 0, len(scoredChunks))
+	// 4. 【顺序去重与 Parent 映射】：依据检索命中的 parent_id 进行有序去重，提升召回多样度
+	type candidateParent struct {
+		parentID string
+		docID    string
+		maxScore float32
+		childID  string
+	}
+
+	seenParents := make(map[string]bool)
+	uniqueParents := make([]*candidateParent, 0, len(scoredChunks))
+
 	for _, sc := range scoredChunks {
-		childIDs = append(childIDs, sc.ChunkID)
-	}
-	childChunkModels, err := e.allDB.Rag.ChunkRepo.GetChunksByIDs(ctx, tenantID, childIDs)
-	childMap := make(map[string]*ragData.KnowledgeChunkModel)
-	if err == nil {
-		for _, cm := range childChunkModels {
-			childMap[cm.ChunkID] = cm
+		pID := sc.ParentID
+		if pID == "" {
+			pID = sc.ChunkID // 兜底降级
+		}
+		if !seenParents[pID] {
+			seenParents[pID] = true
+			uniqueParents = append(uniqueParents, &candidateParent{
+				parentID: pID,
+				docID:    sc.DocID,
+				maxScore: sc.Score,
+				childID:  sc.ChunkID,
+			})
 		}
 	}
 
-	// 补全 Child 纯文本与元数据 (H1/H2/H3) 供 Rerank 打分使用
-	for _, sc := range scoredChunks {
-		if cm, ok := childMap[sc.ChunkID]; ok {
-			sc.Content = cm.Content
-			if sc.ParentID == "" {
-				sc.ParentID = cm.ParentID
-			}
-			if sc.Metadata == nil {
-				sc.Metadata = make(map[string]interface{})
-			}
-			sc.Metadata["h1"] = cm.H1
-			sc.Metadata["h2"] = cm.H2
-			sc.Metadata["h3"] = cm.H3
-		}
+	if len(uniqueParents) == 0 {
+		return nil, nil
 	}
 
-	// 5. 【二阶段重排 (Rerank)】：若启用独立 Reranker，对含有 Child 纯正文的候选集进行 Cross-Encoder 深度打分
-	if e.reranker != nil && len(scoredChunks) > 1 {
-		candidates := make([]*rerank.RerankCandidate, len(scoredChunks))
-		for i, sc := range scoredChunks {
-			candidates[i] = &rerank.RerankCandidate{
-				ID:       sc.ChunkID,
-				DocID:    sc.DocID,
-				ParentID: sc.ParentID,
-				Content:  sc.Content, // 纯正文文本，无前缀噪声！
-				Score:    sc.Score,
-				Metadata: sc.Metadata,
-			}
-		}
-
-		rerankTimeout := 1000 * time.Millisecond
-		if e.cfg != nil && e.cfg.Source.RAG != nil && e.cfg.Source.RAG.Rerank != nil && e.cfg.Source.RAG.Rerank.Timeout > 0 {
-			rerankTimeout = time.Duration(e.cfg.Source.RAG.Rerank.Timeout) * time.Millisecond
-		}
-
-		rrCtx, rrCancel := context.WithTimeout(retCtx, rerankTimeout)
-		rerankedCandidates, rrErr := e.reranker.Rerank(rrCtx, queryText, candidates)
-		rrCancel()
-
-		if rrErr != nil {
-			log.Warnf(ctx, "Reranker execution failed or timed out: %v, fallback to RRF results", rrErr)
-		} else if len(rerankedCandidates) > 0 {
-			newScoredChunks := make([]*retriever.ScoredChunk, len(rerankedCandidates))
-			for i, rc := range rerankedCandidates {
-				newScoredChunks[i] = &retriever.ScoredChunk{
-					ChunkID:  rc.ID,
-					DocID:    rc.DocID,
-					ParentID: rc.ParentID,
-					Score:    rc.Score,
-					Content:  rc.Content,
-					Metadata: rc.Metadata,
-				}
-			}
-			scoredChunks = newScoredChunks
-		}
+	// 截取前 topK * 2 个 Parent 候选用于回查与 Rerank
+	rerankCandidateLimit := topK * 2
+	if len(uniqueParents) > rerankCandidateLimit {
+		uniqueParents = uniqueParents[:rerankCandidateLimit]
 	}
 
-	// 6. 收集 TopK 命中的 Parent IDs 和 Doc IDs，从 MySQL 批量回查 Parent 块完整模型与主文档信息
-	parentIDs := make([]string, 0)
-	docIDs := make([]string, 0)
-	for i, sc := range scoredChunks {
-		if i >= topK {
-			break
-		}
-		if sc.ParentID != "" {
-			parentIDs = append(parentIDs, sc.ParentID)
-		}
-		if sc.DocID != "" {
-			docIDs = append(docIDs, sc.DocID)
+	// 5. 提取 Parent IDs 与 Doc IDs，直接一次性从 MySQL 批量回查 Parent 块模型与文档主信息
+	parentIDs := make([]string, 0, len(uniqueParents))
+	docIDs := make([]string, 0, len(uniqueParents))
+	for _, p := range uniqueParents {
+		parentIDs = append(parentIDs, p.parentID)
+		if p.docID != "" {
+			docIDs = append(docIDs, p.docID)
 		}
 	}
 
