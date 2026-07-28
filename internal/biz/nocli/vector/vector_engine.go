@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -535,16 +536,60 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		docModelMap = make(map[string]*ragData.KnowledgeDocumentModel)
 	}
 
+	// 6. 【Rerank 深度精排】：构造候选列表，调用 e.reranker 策略打分与二次重排
+	rerankCandidates := make([]*rerank.RerankCandidate, 0, len(uniqueParents))
+	for _, p := range uniqueParents {
+		content := ""
+		if pm, ok := parentModelMap[p.parentID]; ok && pm != nil && pm.Content != "" {
+			content = pm.Content
+		} else if sc, ok := lo.Find(scoredChunks, func(c *retriever.ScoredChunk) bool { return c.ChunkID == p.childID }); ok && sc != nil {
+			content = sc.Content
+		}
+
+		rerankCandidates = append(rerankCandidates, &rerank.RerankCandidate{
+			ID:       p.childID,
+			DocID:    p.docID,
+			ParentID: p.parentID,
+			Content:  content,
+			Score:    p.maxScore,
+		})
+	}
+
+	if e.reranker != nil && len(rerankCandidates) > 1 {
+		reranked, rErr := e.reranker.Rerank(retCtx, queryText, rerankCandidates)
+		if rErr != nil {
+			log.Warnf(ctx, "Reranker failed: %v, fallback to un-reranked order", rErr)
+		} else if len(reranked) > 0 {
+			rerankedMap := make(map[string]float32)
+			for _, r := range reranked {
+				rerankedMap[r.ParentID] = r.Score
+			}
+			sort.Slice(uniqueParents, func(i, j int) bool {
+				s1 := rerankedMap[uniqueParents[i].parentID]
+				s2 := rerankedMap[uniqueParents[j].parentID]
+				return s1 > s2
+			})
+		}
+	}
+
 	// 7. 【方案 B 隔离核心】：在线格式化动态拼接来源前缀，组装最终 RAGContext
-	rawResults := make([]*RAGContext, 0, len(scoredChunks))
-	for i, sc := range scoredChunks {
+	rawResults := make([]*RAGContext, 0, len(uniqueParents))
+	for i, p := range uniqueParents {
 		if i >= topK {
 			break
 		}
 
-		fullCtx := sc.Content
+		sc, _ := lo.Find(scoredChunks, func(c *retriever.ScoredChunk) bool { return c.ParentID == p.parentID || c.ChunkID == p.childID })
+		var meta map[string]interface{}
+		scContent := ""
+		if sc != nil {
+			meta = sc.Metadata
+			scContent = sc.Content
+		}
+
+		fullCtx := scContent
 		var pModel *ragData.KnowledgeChunkModel
-		if pm, ok := parentModelMap[sc.ParentID]; ok && pm != nil {
+		if pm, ok := parentModelMap[p.parentID]; ok && pm != nil {
 			pModel = pm
 			if pm.Content != "" {
 				fullCtx = pm.Content
@@ -552,27 +597,27 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		}
 
 		docTitle := ""
-		if dModel, ok := docModelMap[sc.DocID]; ok && dModel != nil {
+		if dModel, ok := docModelMap[p.docID]; ok && dModel != nil {
 			docTitle = dModel.Title
 		}
 
-		childTitlePath := buildTitlePath(sc.Metadata)
+		childTitlePath := buildTitlePath(meta)
 		parentTitlePath := childTitlePath
 		if pModel != nil {
 			parentTitlePath = buildTitlePathFromModel(pModel)
 		}
 
-		formattedChildContent := chunker.InjectMetadataPrefixWithHierarchy(docTitle, childTitlePath, sc.Content)
+		formattedChildContent := chunker.InjectMetadataPrefixWithHierarchy(docTitle, childTitlePath, scContent)
 		formattedFullContext := chunker.InjectMetadataPrefixWithHierarchy(docTitle, parentTitlePath, fullCtx)
 
 		rawResults = append(rawResults, &RAGContext{
-			ChunkID:      sc.ChunkID,
-			DocID:        sc.DocID,
-			ParentID:     sc.ParentID,
+			ChunkID:      p.childID,
+			DocID:        p.docID,
+			ParentID:     p.parentID,
 			ChildContent: formattedChildContent,
 			FullContext:  formattedFullContext,
-			Score:        sc.Score,
-			Metadata:     sc.Metadata,
+			Score:        p.maxScore,
+			Metadata:     meta,
 		})
 	}
 

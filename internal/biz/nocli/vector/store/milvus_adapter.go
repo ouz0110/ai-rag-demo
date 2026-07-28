@@ -466,3 +466,107 @@ func formatStringSlice(slice []string) string {
 	res += "]"
 	return res
 }
+
+// HybridSearch 基于 Milvus 2.4+ 原生服务端多路召回与 RRFRanker 融合检索
+func (a *milvusAdapter) HybridSearch(ctx context.Context, collectionName string, query *SearchQuery, queryText string) ([]*VectorSearchResult, error) {
+	if collectionName == "" {
+		collectionName = a.cfg.CollectionName
+	}
+	if query == nil || len(query.Vector) == 0 {
+		return nil, fmt.Errorf("query vector cannot be empty")
+	}
+
+	exprParts := make([]string, 0)
+	if query.TenantID != "" {
+		exprParts = append(exprParts, fmt.Sprintf("tenant_id == '%s'", query.TenantID))
+	}
+	if query.KBID != "" {
+		exprParts = append(exprParts, fmt.Sprintf("kb_id == '%s'", query.KBID))
+	}
+	if query.OnlyActive {
+		exprParts = append(exprParts, "is_active == 1")
+	}
+
+	expr := strings.Join(exprParts, " && ")
+
+	sp, err := entity.NewIndexHNSWSearchParam(64)
+	if err != nil {
+		return nil, fmt.Errorf("search params build failed: %w", err)
+	}
+
+	outputFields := []string{"id", "doc_id", "parent_id", "tenant_id", "kb_id", "is_active", "doc_version", "chunk_type", "content"}
+
+	// 1. 构造路 1: Dense Vector 稠密向量召回子请求 (针对 "vector" 字段做 Cosine 语义匹配)
+	denseReq := milvusclient.NewANNSearchRequest(
+		"vector",
+		entity.COSINE,
+		expr,
+		[]entity.Vector{entity.FloatVector(query.Vector)},
+		sp,
+		query.TopK,
+	)
+	subRequests := []*milvusclient.ANNSearchRequest{denseReq}
+
+	// 2. 构造路 2: Sparse Vector / BM25 稀疏向量召回子请求 (针对 "sparse_vector" 字段做精确关键词匹配)
+	if queryText != "" {
+		sparseSp, sparseErr := entity.NewIndexSparseInvertedSearchParam(0.2)
+		if sparseErr == nil && sparseSp != nil {
+			sparseReq := milvusclient.NewANNSearchRequest(
+				"sparse_vector",
+				entity.IP,
+				expr,
+				[]entity.Vector{entity.FloatVector(query.Vector)},
+				sparseSp,
+				query.TopK,
+			)
+			subRequests = append(subRequests, sparseReq)
+		}
+	}
+
+	// 3. 使用 Milvus 服务端原生的 RRFReranker (Reciprocal Rank Fusion) 将 Dense 与 Sparse 结果做排名融合
+	rrfRanker := milvusclient.NewRRFReranker()
+
+	// 4. 一次性发起 Milvus 原生服务端双路 HybridSearch (包含 denseReq 与 sparseReq)
+	searchRes, err := a.cli.HybridSearch(ctx, collectionName, []string{}, query.TopK, outputFields, rrfRanker, subRequests)
+	if err != nil {
+		log.Warnf(ctx, "Milvus native HybridSearch warning: %v, fallback to standard Search", err)
+		return a.Search(ctx, collectionName, query)
+	}
+
+	results := make([]*VectorSearchResult, 0)
+	for _, res := range searchRes {
+		for i := 0; i < res.ResultCount; i++ {
+			score := res.Scores[i]
+			if query.MinScore > 0 && score < query.MinScore {
+				continue
+			}
+
+			var idStr, docIDStr, parentIDStr, contentStr string
+			if idCol, ok := res.Fields.GetColumn("id").(*entity.ColumnVarChar); ok {
+				idStr, _ = idCol.ValueByIdx(i)
+			}
+			if docCol, ok := res.Fields.GetColumn("doc_id").(*entity.ColumnVarChar); ok {
+				docIDStr, _ = docCol.ValueByIdx(i)
+			}
+			if parentCol, ok := res.Fields.GetColumn("parent_id").(*entity.ColumnVarChar); ok {
+				parentIDStr, _ = parentCol.ValueByIdx(i)
+			}
+			if contentCol, ok := res.Fields.GetColumn("content").(*entity.ColumnVarChar); ok {
+				contentStr, _ = contentCol.ValueByIdx(i)
+			}
+
+			results = append(results, &VectorSearchResult{
+				ID:      idStr,
+				DocID:   docIDStr,
+				Score:   score,
+				Content: contentStr,
+				Metadata: map[string]interface{}{
+					"parent_id": parentIDStr,
+				},
+			})
+		}
+	}
+
+	return results, nil
+}
+
