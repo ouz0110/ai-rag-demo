@@ -56,6 +56,25 @@ func (r *DocumentRepo) GetDocumentByDocID(ctx context.Context, tenantID, docID s
 	return &doc, nil
 }
 
+// GetDocumentsByDocIDs 批量查询文档记录
+func (r *DocumentRepo) GetDocumentsByDocIDs(ctx context.Context, tenantID string, docIDs []string) (map[string]*KnowledgeDocumentModel, error) {
+	if len(docIDs) == 0 {
+		return make(map[string]*KnowledgeDocumentModel), nil
+	}
+	var docs []*KnowledgeDocumentModel
+	err := r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
+		Where("tenant_id = ? AND doc_id IN ?", tenantID, docIDs).
+		Find(&docs).Error
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]*KnowledgeDocumentModel)
+	for _, d := range docs {
+		result[d.DocID] = d
+	}
+	return result, nil
+}
+
 // UpdateDocumentStatus 更新文档处理状态
 func (r *DocumentRepo) UpdateDocumentStatus(ctx context.Context, tenantID, docID string, status int32, totalChunks int32, errMsg string) error {
 	return r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).

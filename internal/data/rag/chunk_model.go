@@ -79,6 +79,26 @@ func (r *ChunkRepo) GetParentChunksByParentIDs(ctx context.Context, tenantID str
 	return result, nil
 }
 
+// GetParentChunkModelsByParentIDs 根据 ParentID 获取 Parent 块完整模型
+func (r *ChunkRepo) GetParentChunkModelsByParentIDs(ctx context.Context, tenantID string, parentIDs []string) (map[string]*KnowledgeChunkModel, error) {
+	if len(parentIDs) == 0 {
+		return make(map[string]*KnowledgeChunkModel), nil
+	}
+	var parents []*KnowledgeChunkModel
+	err := r.GormDB(ctx).Model(&KnowledgeChunkModel{}).
+		Where("tenant_id = ? AND chunk_id IN ?", tenantID, parentIDs).
+		Find(&parents).Error
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]*KnowledgeChunkModel)
+	for _, p := range parents {
+		result[p.ChunkID] = p
+	}
+	return result, nil
+}
+
 // DeleteChunksByDocID 根据 doc_id 删除该文档对应的全部 MySQL 块
 func (r *ChunkRepo) DeleteChunksByDocID(ctx context.Context, tenantID, docID string) error {
 	return r.GormDB(ctx).Model(&KnowledgeChunkModel{}).

@@ -56,14 +56,24 @@ func TestHierarchicalChunker(t *testing.T) {
 	for _, c := range res.ChildChunks {
 		if c.HasTable == 1 && c.ChunkType == "table" {
 			foundTable = true
-			if !strings.Contains(c.Content, "API 规范文档 > 一、接口命名") {
-				t.Errorf("expected metadata prefix in table child chunk, got: %s", c.Content)
+			if !strings.Contains(c.Content, "/user/get") {
+				t.Errorf("expected table content in child chunk, got: %s", c.Content)
+			}
+			// 测试方案 B 动态注入逻辑
+			formatted := InjectMetadataPrefixWithHierarchy(doc.Title, "一、接口命名", c.Content)
+			if !strings.Contains(formatted, "api_spec") {
+				t.Errorf("expected metadata prefix in formatted string, got: %s", formatted)
 			}
 		}
 		if c.HasCode == 1 && c.ChunkType == "code" {
 			foundCode = true
-			if !strings.Contains(c.Content, "API 规范文档 > 二、响应格式") {
-				t.Errorf("expected metadata prefix in code child chunk, got: %s", c.Content)
+			if !strings.Contains(c.Content, `"code": 0`) {
+				t.Errorf("expected code content in child chunk, got: %s", c.Content)
+			}
+			// 测试方案 B 动态注入逻辑
+			formatted := InjectMetadataPrefixWithHierarchy(doc.Title, "二、响应格式", c.Content)
+			if !strings.Contains(formatted, "api_spec") {
+				t.Errorf("expected metadata prefix in formatted string, got: %s", formatted)
 			}
 		}
 	}

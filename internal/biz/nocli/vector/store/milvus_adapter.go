@@ -87,6 +87,13 @@ func (a *milvusAdapter) CreateCollection(ctx context.Context, collectionName str
 				},
 			},
 			{
+				Name:     "parent_id",
+				DataType: entity.FieldTypeVarChar,
+				TypeParams: map[string]string{
+					entity.TypeParamMaxLength: "128",
+				},
+			},
+			{
 				Name:           "tenant_id",
 				DataType:       entity.FieldTypeVarChar,
 				IsPartitionKey: true, // 开启 Milvus Partition Key 级别多租户：触发底层分区裁剪 (Partition Pruning)，提升海量租户检索效率
@@ -169,6 +176,7 @@ func (a *milvusAdapter) Upsert(ctx context.Context, collectionName string, docs 
 
 	ids := make([]string, 0, len(docs))
 	docIDs := make([]string, 0, len(docs))
+	parentIDs := make([]string, 0, len(docs))
 	tenantIDs := make([]string, 0, len(docs))
 	kbIDs := make([]string, 0, len(docs))
 	isActives := make([]int32, 0, len(docs))
@@ -183,6 +191,12 @@ func (a *milvusAdapter) Upsert(ctx context.Context, collectionName string, docs 
 		tenantIDs = append(tenantIDs, d.TenantID)
 		contents = append(contents, d.Content)
 		vectors = append(vectors, d.Vector)
+
+		parentID := ""
+		if v, ok := d.Metadata["parent_id"].(string); ok {
+			parentID = v
+		}
+		parentIDs = append(parentIDs, parentID)
 
 		// 解析标量元数据
 		kbID := "kb_default_system"
@@ -214,6 +228,7 @@ func (a *milvusAdapter) Upsert(ctx context.Context, collectionName string, docs 
 
 	idCol := entity.NewColumnVarChar("id", ids)
 	docIDCol := entity.NewColumnVarChar("doc_id", docIDs)
+	parentIDCol := entity.NewColumnVarChar("parent_id", parentIDs)
 	tenantIDCol := entity.NewColumnVarChar("tenant_id", tenantIDs)
 	kbIDCol := entity.NewColumnVarChar("kb_id", kbIDs)
 	isActiveCol := entity.NewColumnInt32("is_active", isActives)
@@ -222,7 +237,7 @@ func (a *milvusAdapter) Upsert(ctx context.Context, collectionName string, docs 
 	contentCol := entity.NewColumnVarChar("content", contents)
 	vectorCol := entity.NewColumnFloatVector("vector", len(vectors[0]), vectors)
 
-	_, err := a.cli.Insert(ctx, collectionName, "", idCol, docIDCol, tenantIDCol, kbIDCol, isActiveCol, docVersionCol, chunkTypeCol, contentCol, vectorCol)
+	_, err := a.cli.Insert(ctx, collectionName, "", idCol, docIDCol, parentIDCol, tenantIDCol, kbIDCol, isActiveCol, docVersionCol, chunkTypeCol, contentCol, vectorCol)
 	if err != nil {
 		return fmt.Errorf("milvus insert error: %w", err)
 	}
@@ -279,7 +294,7 @@ func (a *milvusAdapter) Search(ctx context.Context, collectionName string, query
 		return nil, fmt.Errorf("search params build failed: %w", err)
 	}
 
-	outputFields := []string{"id", "doc_id", "tenant_id", "kb_id", "is_active", "doc_version", "chunk_type", "content"}
+	outputFields := []string{"id", "doc_id", "parent_id", "tenant_id", "kb_id", "is_active", "doc_version", "chunk_type", "content"}
 	vectors := []entity.Vector{entity.FloatVector(query.Vector)}
 
 	searchRes, err := a.cli.Search(ctx, collectionName, []string{}, expr, outputFields, vectors, "vector", entity.COSINE, query.TopK, sp)
@@ -295,22 +310,30 @@ func (a *milvusAdapter) Search(ctx context.Context, collectionName string, query
 				continue
 			}
 
-			var idStr, docIDStr, contentStr string
+			var idStr, docIDStr, parentIDStr, contentStr string
 			if idCol, ok := res.Fields.GetColumn("id").(*entity.ColumnVarChar); ok {
 				idStr, _ = idCol.ValueByIdx(i)
 			}
 			if docCol, ok := res.Fields.GetColumn("doc_id").(*entity.ColumnVarChar); ok {
 				docIDStr, _ = docCol.ValueByIdx(i)
 			}
+			if parentCol, ok := res.Fields.GetColumn("parent_id").(*entity.ColumnVarChar); ok {
+				parentIDStr, _ = parentCol.ValueByIdx(i)
+			}
 			if contentCol, ok := res.Fields.GetColumn("content").(*entity.ColumnVarChar); ok {
 				contentStr, _ = contentCol.ValueByIdx(i)
 			}
 
+			meta := map[string]interface{}{
+				"parent_id": parentIDStr,
+			}
+
 			results = append(results, &VectorSearchResult{
-				ID:      idStr,
-				DocID:   docIDStr,
-				Score:   score,
-				Content: contentStr,
+				ID:       idStr,
+				DocID:    docIDStr,
+				Score:    score,
+				Content:  contentStr,
+				Metadata: meta,
 			})
 		}
 	}

@@ -198,15 +198,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 	}
 	totalChunks := len(splitRes.ChildChunks)
 
-	// 3. 【生产级关键项】：前缀元数据硬编码注入，消除大模型缺乏上下文瞎编概率
-	for _, p := range splitRes.ParentChunks {
-		p.Content = chunker.InjectMetadataPrefix(doc.Title, p.Content)
-	}
-	for _, c := range splitRes.ChildChunks {
-		c.Content = chunker.InjectMetadataPrefix(doc.Title, c.Content)
-	}
-
-	// 构造 MySQL 块 (附带 H1~H3, 行号, 表格/代码块标记, 切片 SHA256 Hash 与类型)
+	// 构造 MySQL 块 (纯正文内容，附带 H1~H3, 行号, 表格/代码块标记, 切片 SHA256 Hash 与类型)
 	chunkModels := make([]*ragData.KnowledgeChunkModel, 0, len(splitRes.ParentChunks)+len(splitRes.ChildChunks))
 	for _, p := range splitRes.ParentChunks {
 		pHash := CalculateContentHash([]byte(p.Content))
@@ -268,7 +260,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		return nil, fmt.Errorf("batch save chunks error: %w", err)
 	}
 
-	// 向量化 Child Chunks
+	// 向量化 Child Chunks (采用纯正文生成 Embeddings)
 	childTexts := make([]string, len(splitRes.ChildChunks))
 	for i, c := range splitRes.ChildChunks {
 		childTexts[i] = c.Content
@@ -280,7 +272,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		return nil, fmt.Errorf("generate embeddings error: %w", err)
 	}
 
-	// 构建 VectorDocument (注入完整的标量 Metadata 属性)
+	// 构建 Pure Index 模式的 VectorDocument (Milvus 不存冗余文本，只存 Vector 与核心标量 ID)
 	vecDocs := make([]*vectorData.VectorDocument, len(splitRes.ChildChunks))
 	for i, c := range splitRes.ChildChunks {
 		vecDocs[i] = &vectorData.VectorDocument{
@@ -424,7 +416,7 @@ func (e *VectorEngine) IngestDocument(ctx context.Context, tenantID, docID, titl
 	return e.processAndSaveDocument(ctx, docModel, rawContent, docHash, "", e.getCollectionName())
 }
 
-// RetrieveContext 执行生产级混合检索、1.5s SRE 硬超时降级与首尾强化 Context 组装 (解决 Lost in the Middle)
+// RetrieveContext 执行生产级混合检索、Pure Index 回查、Rerank 二次精排与方案 B 动态 Prompt 前缀组装
 func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText string, topK int) ([]*RAGContext, error) {
 	if tenantID == "" || queryText == "" {
 		return nil, fmt.Errorf("empty query params")
@@ -465,7 +457,7 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		OnlyActive: true,
 	}
 
-	// 3. 执行 Hybrid Retriever 召回
+	// 3. 执行 Hybrid Retriever 召回 (Milvus 检索阶段只返回 ChunkID 与 ParentID 索引，不传输大文本)
 	scoredChunks, err := e.retriever.Retrieve(retCtx, collectionName, searchQuery, queryText)
 	if err != nil {
 		log.Warnf(ctx, "Hybrid retrieval failed or timed out: %v", err)
@@ -476,7 +468,36 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		return nil, nil
 	}
 
-	// 4. 【二阶段重排 (Rerank)】：若启用独立 Reranker (如 LLM 打分策略)，对粗筛候选集深度二次打分
+	// 4. 【Pure Index 模式】：根据检索出的 ChunkID 列表，从 MySQL 批量回查 Child 块纯正文与标题元数据
+	childIDs := make([]string, 0, len(scoredChunks))
+	for _, sc := range scoredChunks {
+		childIDs = append(childIDs, sc.ChunkID)
+	}
+	childChunkModels, err := e.allDB.Rag.ChunkRepo.GetChunksByIDs(ctx, tenantID, childIDs)
+	childMap := make(map[string]*ragData.KnowledgeChunkModel)
+	if err == nil {
+		for _, cm := range childChunkModels {
+			childMap[cm.ChunkID] = cm
+		}
+	}
+
+	// 补全 Child 纯文本与元数据 (H1/H2/H3) 供 Rerank 打分使用
+	for _, sc := range scoredChunks {
+		if cm, ok := childMap[sc.ChunkID]; ok {
+			sc.Content = cm.Content
+			if sc.ParentID == "" {
+				sc.ParentID = cm.ParentID
+			}
+			if sc.Metadata == nil {
+				sc.Metadata = make(map[string]interface{})
+			}
+			sc.Metadata["h1"] = cm.H1
+			sc.Metadata["h2"] = cm.H2
+			sc.Metadata["h3"] = cm.H3
+		}
+	}
+
+	// 5. 【二阶段重排 (Rerank)】：若启用独立 Reranker，对含有 Child 纯正文的候选集进行 Cross-Encoder 深度打分
 	if e.reranker != nil && len(scoredChunks) > 1 {
 		candidates := make([]*rerank.RerankCandidate, len(scoredChunks))
 		for i, sc := range scoredChunks {
@@ -484,7 +505,7 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 				ID:       sc.ChunkID,
 				DocID:    sc.DocID,
 				ParentID: sc.ParentID,
-				Content:  sc.Content,
+				Content:  sc.Content, // 纯正文文本，无前缀噪声！
 				Score:    sc.Score,
 				Metadata: sc.Metadata,
 			}
@@ -517,21 +538,34 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		}
 	}
 
-	// 5. 收集 Parent IDs 并从 MySQL 回查完整 Parent 粗粒度上下文
+	// 6. 收集 TopK 命中的 Parent IDs 和 Doc IDs，从 MySQL 批量回查 Parent 块完整模型与主文档信息
 	parentIDs := make([]string, 0)
-	for _, sc := range scoredChunks {
+	docIDs := make([]string, 0)
+	for i, sc := range scoredChunks {
+		if i >= topK {
+			break
+		}
 		if sc.ParentID != "" {
 			parentIDs = append(parentIDs, sc.ParentID)
 		}
+		if sc.DocID != "" {
+			docIDs = append(docIDs, sc.DocID)
+		}
 	}
 
-	parentMap, err := e.allDB.Rag.ChunkRepo.GetParentChunksByParentIDs(ctx, tenantID, parentIDs)
+	parentModelMap, err := e.allDB.Rag.ChunkRepo.GetParentChunkModelsByParentIDs(ctx, tenantID, parentIDs)
 	if err != nil {
-		log.Warnf(ctx, "Fetch parent chunks from mysql error: %v", err)
-		parentMap = make(map[string]string)
+		log.Warnf(ctx, "Fetch parent chunk models from mysql error: %v", err)
+		parentModelMap = make(map[string]*ragData.KnowledgeChunkModel)
 	}
 
-	// 5. 组装最相关结果集
+	docModelMap, err := e.allDB.Rag.DocRepo.GetDocumentsByDocIDs(ctx, tenantID, docIDs)
+	if err != nil {
+		log.Warnf(ctx, "Fetch doc models from mysql error: %v", err)
+		docModelMap = make(map[string]*ragData.KnowledgeDocumentModel)
+	}
+
+	// 7. 【方案 B 隔离核心】：在线格式化动态拼接来源前缀，组装最终 RAGContext
 	rawResults := make([]*RAGContext, 0, len(scoredChunks))
 	for i, sc := range scoredChunks {
 		if i >= topK {
@@ -539,21 +573,73 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		}
 
 		fullCtx := sc.Content
-		if pText, ok := parentMap[sc.ParentID]; ok && pText != "" {
-			fullCtx = pText
+		var pModel *ragData.KnowledgeChunkModel
+		if pm, ok := parentModelMap[sc.ParentID]; ok && pm != nil {
+			pModel = pm
+			if pm.Content != "" {
+				fullCtx = pm.Content
+			}
 		}
+
+		docTitle := ""
+		if dModel, ok := docModelMap[sc.DocID]; ok && dModel != nil {
+			docTitle = dModel.Title
+		}
+
+		childTitlePath := buildTitlePath(sc.Metadata)
+		parentTitlePath := childTitlePath
+		if pModel != nil {
+			parentTitlePath = buildTitlePathFromModel(pModel)
+		}
+
+		formattedChildContent := chunker.InjectMetadataPrefixWithHierarchy(docTitle, childTitlePath, sc.Content)
+		formattedFullContext := chunker.InjectMetadataPrefixWithHierarchy(docTitle, parentTitlePath, fullCtx)
 
 		rawResults = append(rawResults, &RAGContext{
 			ChunkID:      sc.ChunkID,
 			DocID:        sc.DocID,
 			ParentID:     sc.ParentID,
-			ChildContent: sc.Content,
-			FullContext:  fullCtx,
+			ChildContent: formattedChildContent,
+			FullContext:  formattedFullContext,
 			Score:        sc.Score,
 			Metadata:     sc.Metadata,
 		})
 	}
 
-	// 6. 【生产级关键项】：首尾强化重排 (Sandwich Context Assembly)，解决 Lost in the Middle 效应！
+	// 8. 【生产级关键项】：首尾强化重排 (Sandwich Context Assembly)，解决 Lost in the Middle 效应！
 	return retriever.ReorderSandwichContext(rawResults), nil
+}
+
+func buildTitlePath(meta map[string]interface{}) string {
+	if meta == nil {
+		return ""
+	}
+	var parts []string
+	if h1, ok := meta["h1"].(string); ok && h1 != "" {
+		parts = append(parts, h1)
+	}
+	if h2, ok := meta["h2"].(string); ok && h2 != "" {
+		parts = append(parts, h2)
+	}
+	if h3, ok := meta["h3"].(string); ok && h3 != "" {
+		parts = append(parts, h3)
+	}
+	return strings.Join(parts, " > ")
+}
+
+func buildTitlePathFromModel(m *ragData.KnowledgeChunkModel) string {
+	if m == nil {
+		return ""
+	}
+	var parts []string
+	if m.H1 != "" {
+		parts = append(parts, m.H1)
+	}
+	if m.H2 != "" {
+		parts = append(parts, m.H2)
+	}
+	if m.H3 != "" {
+		parts = append(parts, m.H3)
+	}
+	return strings.Join(parts, " > ")
 }

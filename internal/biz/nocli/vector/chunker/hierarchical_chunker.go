@@ -67,13 +67,10 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 
 		flushPendingChild := func() {
 			text := strings.TrimSpace(pendingChildText.String())
-			if text == "" {
+			if isIgnoredNoiseNode(text) {
 				pendingChildText.Reset()
 				return
 			}
-
-			// 硬编码前缀元数据注入
-			prefixedText := InjectMetadataPrefixWithHierarchy(doc.Title, sec.TitlePath, text)
 
 			childUnit := &ChunkUnit{
 				ChunkID:    fmtUUID(),
@@ -86,9 +83,9 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 				HasTable:   pendingHasTable,
 				HasCode:    pendingHasCode,
 				ChunkType:  "text",
-				Content:    prefixedText,
+				Content:    text,
 				ChunkIndex: globalChildIdx,
-				TokenCount: int32(len([]rune(prefixedText))),
+				TokenCount: int32(len([]rune(text))),
 				IsParent:   false,
 			}
 			if pendingHasTable == 1 {
@@ -121,7 +118,11 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 					cType = "code"
 				}
 
-				prefixedText := InjectMetadataPrefixWithHierarchy(doc.Title, sec.TitlePath, node.Content)
+				nodeText := strings.TrimSpace(node.Content)
+				if isIgnoredNoiseNode(nodeText) {
+					continue
+				}
+
 				childUnit := &ChunkUnit{
 					ChunkID:    fmtUUID(),
 					ParentID:   secParentID,
@@ -133,9 +134,9 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 					HasTable:   hasTab,
 					HasCode:    hasCd,
 					ChunkType:  cType,
-					Content:    prefixedText,
+					Content:    nodeText,
 					ChunkIndex: globalChildIdx,
-					TokenCount: int32(len([]rune(prefixedText))),
+					TokenCount: int32(len([]rune(nodeText))),
 					IsParent:   false,
 				}
 				childChunks = append(childChunks, childUnit)
@@ -145,7 +146,7 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 
 			// 保护逻辑 2：普通文本段落的累加与分块
 			nodeText := strings.TrimSpace(node.Content)
-			if nodeText == "" {
+			if isIgnoredNoiseNode(nodeText) {
 				continue
 			}
 
@@ -169,7 +170,9 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 				if len([]rune(nodeText)) > hc.maxChildSize {
 					subPieces := splitLongTextByPunctuation(nodeText, hc.maxChildSize)
 					for _, piece := range subPieces {
-						prefixedText := InjectMetadataPrefixWithHierarchy(doc.Title, sec.TitlePath, piece)
+						if isIgnoredNoiseNode(piece) {
+							continue
+						}
 						childChunks = append(childChunks, &ChunkUnit{
 							ChunkID:    fmtUUID(),
 							ParentID:   secParentID,
@@ -179,9 +182,9 @@ func (hc *HierarchicalChunker) SplitFromAST(doc *parser.ParsedDocument) *ParentC
 							StartLine:  int32(node.StartLine),
 							EndLine:    int32(node.EndLine),
 							ChunkType:  "text",
-							Content:    prefixedText,
+							Content:    piece,
 							ChunkIndex: globalChildIdx,
-							TokenCount: int32(len([]rune(prefixedText))),
+							TokenCount: int32(len([]rune(piece))),
 							IsParent:   false,
 						})
 						globalChildIdx++
@@ -237,3 +240,12 @@ func splitLongTextByPunctuation(text string, maxRuneLen int) []string {
 
 	return pieces
 }
+
+func isIgnoredNoiseNode(text string) bool {
+	t := strings.TrimSpace(text)
+	if t == "" || t == "***" || t == "---" || t == "___" || t == "***\n" {
+		return true
+	}
+	return false
+}
+
