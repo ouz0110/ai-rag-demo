@@ -2,8 +2,11 @@ package retriever
 
 import (
 	"context"
+	"sort"
+	"sync"
 
 	vectorData "ai-rag-demo/internal/biz/nocli/vector/store"
+	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/pkg/log"
 )
 
@@ -17,56 +20,113 @@ type ScoredChunk struct {
 	Metadata map[string]interface{} `json:"metadata"`  // 关联标量元数据
 }
 
-// HybridRetriever 主流原生的 Milvus 2.4+ 服务端 HybridSearch 检索融合执行器
+// HybridRetriever 双路混合检索融合执行器 (Dense 向量语义 + Sparse/BM25 文本关键词 + RRF 融合算子)
 type HybridRetriever struct {
-	vectorStore vectorData.VectorStore // 底层向量存储适配器
-	legacyRRF   *LegacyManualHybridRetriever // 历史客户端手写双路 RRF (做兜底与对比)
+	vectorStore vectorData.VectorStore
+	kConstant   float32 // RRF 倒数排名融合常数 (默认 60.0)
 }
 
 func NewHybridRetriever(vectorStore vectorData.VectorStore) *HybridRetriever {
 	return &HybridRetriever{
 		vectorStore: vectorStore,
-		legacyRRF:   NewLegacyManualHybridRetriever(vectorStore),
+		kConstant:   60.0,
 	}
 }
 
-// Retrieve 主流解法：直接调用向量数据库服务端的原生 HybridSearch 接口完成多路召回与 RRF 融合
+// Retrieve 执行 Concurrent 双路召回 (Dense 向量 + BM25/Text 关键词) 并进行 RRF 倒数排名融合
 func (r *HybridRetriever) Retrieve(ctx context.Context, collectionName string, query *vectorData.SearchQuery, queryText string) ([]*ScoredChunk, error) {
 	if r.vectorStore == nil {
 		return nil, nil
 	}
 
-	// 1. 优先使用 Milvus 2.4+ 原生服务端 HybridSearch
-	results, err := r.vectorStore.HybridSearch(ctx, collectionName, query, queryText)
-	if err != nil {
-		log.Warnf(ctx, "[HybridRetriever] Native HybridSearch error: %v, falling back to Legacy Concurrent RRF", err)
-		// 降级使用历史手写并发 RRF 检索引擎
-		return r.legacyRRF.Retrieve(ctx, collectionName, query, queryText)
+	var denseResults []*vectorData.VectorSearchResult
+	var sparseResults []*vectorData.VectorSearchResult
+	var denseErr, sparseErr error
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// 路 1: 并发执行 Dense Vector 向量语义检索 (遵守安全协程规范)
+	common.RunInGoroutine(ctx, func(gCtx context.Context) {
+		defer wg.Done()
+		denseResults, denseErr = r.vectorStore.Search(gCtx, collectionName, query)
+	})
+
+	// 路 2: 并发执行 Sparse/BM25 文本关键词精确检索 (遵守安全协程规范)
+	common.RunInGoroutine(ctx, func(gCtx context.Context) {
+		defer wg.Done()
+		topK := 10
+		tenantID := ""
+		if query != nil {
+			topK = query.TopK
+			tenantID = query.TenantID
+		}
+		sparseResults, sparseErr = r.vectorStore.SearchText(gCtx, collectionName, tenantID, queryText, topK)
+	})
+
+	wg.Wait()
+
+	if denseErr != nil {
+		return nil, denseErr
+	}
+	if sparseErr != nil {
+		log.Warnf(ctx, "[HybridRetriever] Sparse text search warning: %v, fallback to dense results", sparseErr)
 	}
 
-	if len(results) == 0 {
-		return nil, nil
+	// RRF 倒数排名融合算法 (Reciprocal Rank Fusion)
+	rrfScores := make(map[string]float32)
+	chunkMap := make(map[string]*vectorData.VectorSearchResult)
+
+	for rank, item := range denseResults {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		chunkMap[item.ID] = item
+		rrfScores[item.ID] += 1.0 / (r.kConstant + float32(rank+1))
 	}
 
-	// 2. 转化为 RAG 门面层 ScoredChunk
-	scoredChunks := make([]*ScoredChunk, 0, len(results))
-	for _, res := range results {
+	for rank, item := range sparseResults {
+		if item == nil || item.ID == "" {
+			continue
+		}
+		if _, ok := chunkMap[item.ID]; !ok {
+			chunkMap[item.ID] = item
+		}
+		rrfScores[item.ID] += 1.0 / (r.kConstant + float32(rank+1))
+	}
+
+	type rrfItem struct {
+		id    string
+		score float32
+	}
+	rrfList := make([]rrfItem, 0, len(rrfScores))
+	for id, score := range rrfScores {
+		rrfList = append(rrfList, rrfItem{id: id, score: score})
+	}
+
+	sort.Slice(rrfList, func(i, j int) bool {
+		return rrfList[i].score > rrfList[j].score
+	})
+
+	finalChunks := make([]*ScoredChunk, 0, len(rrfList))
+	for _, item := range rrfList {
+		raw := chunkMap[item.id]
 		parentID := ""
-		if res.Metadata != nil {
-			if pid, ok := res.Metadata["parent_id"].(string); ok {
+		if raw.Metadata != nil {
+			if pid, ok := raw.Metadata["parent_id"].(string); ok {
 				parentID = pid
 			}
 		}
 
-		scoredChunks = append(scoredChunks, &ScoredChunk{
-			ChunkID:  res.ID,
-			DocID:    res.DocID,
+		finalChunks = append(finalChunks, &ScoredChunk{
+			ChunkID:  raw.ID,
+			DocID:    raw.DocID,
 			ParentID: parentID,
-			Score:    res.Score,
-			Content:  res.Content,
-			Metadata: res.Metadata,
+			Score:    item.score,
+			Content:  raw.Content,
+			Metadata: raw.Metadata,
 		})
 	}
 
-	return scoredChunks, nil
+	return finalChunks, nil
 }

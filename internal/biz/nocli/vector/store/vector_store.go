@@ -43,6 +43,4 @@ type VectorStore interface {
 	DeleteByDocID(ctx context.Context, collectionName string, tenantID, docID string) error
 	Search(ctx context.Context, collectionName string, query *SearchQuery) ([]*VectorSearchResult, error)
 	SearchText(ctx context.Context, collectionName string, tenantID, queryText string, topK int) ([]*VectorSearchResult, error)
-	// HybridSearch Milvus 2.4+ 原生服务端多路召回与 RRF/Weighted 融合接口 (推荐主流使用)
-	HybridSearch(ctx context.Context, collectionName string, query *SearchQuery, queryText string) ([]*VectorSearchResult, error)
 }
