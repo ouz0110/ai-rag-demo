@@ -14,9 +14,12 @@ import (
 )
 
 const (
-	ToolName            = "rag_search"
-	parentKBTenantIDKey = "parent_kb_tenant_id"
-	parentKBIDKey       = "parent_kb_id"
+	ToolName               = "rag_search"
+	parentKBTenantIDKey    = "parent_kb_tenant_id"
+	parentKBIDKey          = "parent_kb_id"
+	parentEnableRAGKey     = "parent_enable_rag"
+	parentKBNameKey        = "parent_kb_name"
+	parentKBDescriptionKey = "parent_kb_description"
 )
 
 type Args struct {
@@ -83,7 +86,7 @@ func (t *Tool) Definition() openai.Tool {
 
 func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	// 【安全阀控制】：判断当前 Context 是否启用了 RAG 检索功能
-	if enableRAG, ok := ctx.Value("parent_enable_rag").(bool); ok && !enableRAG {
+	if enableRAG, ok := ctx.Value(parentEnableRAGKey).(bool); ok && !enableRAG {
 		return "[RAG 提示] 当前对话会话未启用 RAG 知识库检索功能。请勿继续检索向量库，直接回答用户的问题或提示用户开启 RAG 检索开关。", nil
 	}
 
@@ -101,8 +104,6 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	if tenantID == "" {
 		if ctxVal, ok := ctx.Value(parentKBTenantIDKey).(string); ok && ctxVal != "" {
 			tenantID = ctxVal
-		} else if ctxVal, ok := ctx.Value("parent_kb_tenant_id").(string); ok && ctxVal != "" {
-			tenantID = ctxVal
 		} else {
 			tenantID = vector.DefaultTenantID
 		}
@@ -111,8 +112,6 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	kbID := args.KBID
 	if kbID == "" {
 		if ctxVal, ok := ctx.Value(parentKBIDKey).(string); ok && ctxVal != "" {
-			kbID = ctxVal
-		} else if ctxVal, ok := ctx.Value("parent_kb_id").(string); ok && ctxVal != "" {
 			kbID = ctxVal
 		} else {
 			kbID = vector.DefaultKBID
@@ -147,8 +146,8 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	// 3. 结果格式化输出给 LLM
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("=== RAG 知识库检索结果 ===\n"))
-	if kbName, ok := ctx.Value("parent_kb_name").(string); ok && kbName != "" {
-		kbDesc, _ := ctx.Value("parent_kb_description").(string)
+	if kbName, ok := ctx.Value(parentKBNameKey).(string); ok && kbName != "" {
+		kbDesc, _ := ctx.Value(parentKBDescriptionKey).(string)
 		sb.WriteString(fmt.Sprintf("【目标知识库】: %s (%s)\n", kbName, kbDesc))
 	}
 	sb.WriteString(fmt.Sprintf("【原始输入查询】: %s\n", rawQuery))

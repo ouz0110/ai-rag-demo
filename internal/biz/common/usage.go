@@ -63,9 +63,18 @@ func NewUsageRecorder(
 		pricingMap: make(map[string]*conf.ModelPricingConfig),
 	}
 
-	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Billing != nil {
-		for model, p := range cfg.Source.RAG.Billing.DefaultPrices {
-			recorder.pricingMap[model] = p
+	if cfg != nil {
+		if cfg.Source.OpenAI != nil && cfg.Source.OpenAI.Billing != nil {
+			for model, p := range cfg.Source.OpenAI.Billing.DefaultPrices {
+				recorder.pricingMap[model] = p
+			}
+		}
+		if cfg.Source.RAG != nil && cfg.Source.RAG.Billing != nil {
+			for model, p := range cfg.Source.RAG.Billing.DefaultPrices {
+				if _, ok := recorder.pricingMap[model]; !ok {
+					recorder.pricingMap[model] = p
+				}
+			}
 		}
 	}
 	return recorder

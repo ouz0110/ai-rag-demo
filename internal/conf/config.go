@@ -72,9 +72,10 @@ type OTel struct {
 }
 
 type OpenAI struct {
-	APIKey  string `json:"api_key"`
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
+	APIKey  string         `json:"api_key" yaml:"api_key"`
+	BaseURL string         `json:"base_url" yaml:"base_url"`
+	Model   string         `json:"model" yaml:"model"`
+	Billing *BillingConfig `json:"billing" yaml:"billing"`
 }
 
 type AgentConfig struct {

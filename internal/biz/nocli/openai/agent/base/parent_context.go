@@ -6,18 +6,16 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-type ParentContextKey string
-
 const (
-	ParentSessionIDKey     ParentContextKey = "parent_session_id"
-	ParentMessagesKey      ParentContextKey = "parent_messages"
-	ParentAppenderKey      ParentContextKey = "parent_messages_appender"
-	ParentEmitterKey       ParentContextKey = "parent_emitter"
-	ParentKBTenantIDKey    ParentContextKey = "parent_kb_tenant_id"
-	ParentKBIDKey          ParentContextKey = "parent_kb_id"
-	ParentEnableRAGKey     ParentContextKey = "parent_enable_rag"
-	ParentKBNameKey        ParentContextKey = "parent_kb_name"
-	ParentKBDescriptionKey ParentContextKey = "parent_kb_description"
+	ParentSessionIDKey     = "parent_session_id"
+	ParentMessagesKey      = "parent_messages"
+	ParentAppenderKey      = "parent_messages_appender"
+	ParentEmitterKey       = "parent_emitter"
+	ParentKBTenantIDKey    = "parent_kb_tenant_id"
+	ParentKBIDKey          = "parent_kb_id"
+	ParentEnableRAGKey     = "parent_enable_rag"
+	ParentKBNameKey        = "parent_kb_name"
+	ParentKBDescriptionKey = "parent_kb_description"
 )
 
 type ParentContext struct {

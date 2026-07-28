@@ -26,8 +26,8 @@ import (
 	"ai-rag-demo/internal/pkg/log"
 
 	"github.com/google/uuid"
-	openai "github.com/sashabaranov/go-openai"
 	"github.com/samber/lo"
+	openai "github.com/sashabaranov/go-openai"
 )
 
 // RAGContext 最终输出给 LLM 组装 Prompt 的上下文数据结构
@@ -289,6 +289,27 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		return nil, fmt.Errorf("generate embeddings error: %w", err)
 	}
 
+	if e.usageRecorder != nil {
+		userID := doc.TenantID
+		if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
+			userID = u.Openid
+		}
+		totalUsage := openai.Usage{
+			PromptTokens: embUsage.PromptTokens + chunkingUsage.PromptTokens,
+			TotalTokens:  embUsage.TotalTokens + chunkingUsage.TotalTokens,
+		}
+		_, _ = e.usageRecorder.RecordOpenAIUsage(
+			ctx,
+			fmt.Sprintf("emb_%s_%d", doc.DocID, time.Now().UnixNano()),
+			userID,
+			dataBase.ServiceTypeEmbedding,
+			"openai",
+			"text-embedding-3-large",
+			totalUsage,
+			int32(totalChunks),
+		)
+	}
+
 	// 构建 VectorDocument (Milvus 存储 Child 纯正文、Vector 向量及其对应的 parent_id 路由标量，完美支持后续混合检索与 BM25 匹配)
 	vecDocs := make([]*vectorData.VectorDocument, len(splitRes.ChildChunks))
 	for i, c := range splitRes.ChildChunks {
@@ -484,8 +505,8 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 
 	collectionName := e.getCollectionName()
 
-	// 【SRE 硬超时防护】：设置 1.5 秒硬超时，超时触发降级返回空或兜底结果，防止拖垮在线 QPS
-	retCtx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	// 【SRE 硬超时防护】：设置 1.5 秒硬超时，超时触发降级返回空或兜底结果，防止拖垮在线 QPS--先60s，本地性能太差了
+	retCtx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
 	defer cancel()
 
 	// 1. 生成 Query 的 Embedding 向量

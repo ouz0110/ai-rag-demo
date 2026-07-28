@@ -1,13 +1,18 @@
 package base
 
 import (
-	pb "ai-rag-demo/api/nocli/v1"
-	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"time"
+
+	pb "ai-rag-demo/api/nocli/v1"
+	bizCommon "ai-rag-demo/internal/biz/common"
+	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
+	"ai-rag-demo/internal/common"
+	dataBase "ai-rag-demo/internal/data/base"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -15,6 +20,10 @@ import (
 // GetStreamFetcher 构造流式 MessageFetcher 闭包
 func (b *BaseAgent) GetStreamFetcher(sessionID string, chatModel *chatmodel.ChatModel, emitter StreamEmitter) MessageFetcher {
 	return func(ctx context.Context, req openai.ChatCompletionRequest) (openai.ChatCompletionMessage, error) {
+		req.StreamOptions = &openai.StreamOptions{
+			IncludeUsage: true,
+		}
+
 		stream, err := chatModel.GetOpenAI(ctx).CreateChatCompletionStream(ctx, req)
 		if err != nil {
 			return openai.ChatCompletionMessage{}, err
@@ -23,6 +32,7 @@ func (b *BaseAgent) GetStreamFetcher(sessionID string, chatModel *chatmodel.Chat
 
 		var textBuilder strings.Builder
 		var combinedMessage openai.ChatCompletionMessage
+		var finalUsage openai.Usage
 		toolCallsMap := make(map[int]*openai.ToolCall)
 
 		for {
@@ -32,6 +42,10 @@ func (b *BaseAgent) GetStreamFetcher(sessionID string, chatModel *chatmodel.Chat
 			}
 			if err != nil {
 				return openai.ChatCompletionMessage{}, err
+			}
+
+			if response.Usage != nil {
+				finalUsage = *response.Usage
 			}
 
 			if len(response.Choices) == 0 {
@@ -101,6 +115,45 @@ func (b *BaseAgent) GetStreamFetcher(sessionID string, chatModel *chatmodel.Chat
 			combinedMessage.ToolCalls = toolCalls
 		}
 
+		// 【扣费与 Token 统计落盘】
+		if recorder := chatModel.GetUsageRecorder(); recorder != nil {
+			if finalUsage.TotalTokens == 0 {
+				var promptBuilder strings.Builder
+				for _, msg := range req.Messages {
+					promptBuilder.WriteString(msg.Content)
+				}
+				pTokens := bizCommon.CalculateTextTokens(promptBuilder.String())
+				cTokens := bizCommon.CalculateTextTokens(textBuilder.String())
+				finalUsage = openai.Usage{
+					PromptTokens:     int(pTokens),
+					CompletionTokens: int(cTokens),
+					TotalTokens:      int(pTokens + cTokens),
+				}
+			}
+
+			userID := "default_user"
+			if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
+				userID = u.Openid
+			}
+
+			modelName := req.Model
+			if modelName == "" && chatModel.GetConfig() != nil && chatModel.GetConfig().Source.OpenAI != nil {
+				modelName = chatModel.GetConfig().Source.OpenAI.Model
+			}
+
+			reqID := fmt.Sprintf("stream_%s_%d", sessionID, time.Now().UnixNano())
+			_, _ = recorder.RecordOpenAIUsage(
+				ctx,
+				reqID,
+				userID,
+				dataBase.ServiceTypeOpenAI,
+				"openai",
+				modelName,
+				finalUsage,
+				0,
+			)
+		}
+
 		return combinedMessage, nil
 	}
 }
@@ -115,6 +168,35 @@ func (b *BaseAgent) GetSyncFetcher(chatModel *chatmodel.ChatModel) MessageFetche
 
 		if len(resp.Choices) == 0 {
 			return openai.ChatCompletionMessage{}, fmt.Errorf("LLM 返回空的 Choices")
+		}
+
+		// 【扣费与 Token 统计落盘】
+		if recorder := chatModel.GetUsageRecorder(); recorder != nil {
+			userID := "default_user"
+			if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
+				userID = u.Openid
+			}
+
+			modelName := req.Model
+			if modelName == "" && chatModel.GetConfig() != nil && chatModel.GetConfig().Source.OpenAI != nil {
+				modelName = chatModel.GetConfig().Source.OpenAI.Model
+			}
+
+			reqID := resp.ID
+			if reqID == "" {
+				reqID = fmt.Sprintf("req_%d", time.Now().UnixNano())
+			}
+
+			_, _ = recorder.RecordOpenAIUsage(
+				ctx,
+				reqID,
+				userID,
+				dataBase.ServiceTypeOpenAI,
+				"openai",
+				modelName,
+				resp.Usage,
+				0,
+			)
 		}
 
 		return resp.Choices[0].Message, nil
