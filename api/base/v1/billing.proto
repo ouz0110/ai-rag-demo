@@ -1,0 +1,147 @@
+syntax = "proto3";
+
+package ai_rag_demo_api.base.v1;
+option go_package = "base/v1;base";
+
+import "google/api/annotations.proto";
+import "validate/validate.proto";
+
+// Billing AI 计费服务
+service Billing {
+  // 获取当前用户余额
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse) {
+    option (google.api.http) = {
+      get: "/base/v1/billing/getBalance"
+    };
+  }
+
+  // 用户充值
+  rpc Recharge(RechargeRequest) returns (RechargeResponse) {
+    option (google.api.http) = {
+      post: "/base/v1/billing/recharge"
+      body: "*"
+    };
+  }
+
+  // 获取 AI 消费流水
+  rpc ListLogs(ListLogsRequest) returns (ListLogsResponse) {
+    option (google.api.http) = {
+      get: "/base/v1/billing/listLogs"
+    };
+  }
+
+  // 获取模型价格配置
+  rpc GetPricing(GetPricingRequest) returns (GetPricingResponse) {
+    option (google.api.http) = {
+      get: "/base/v1/billing/getPricing"
+    };
+  }
+}
+
+// 获取余额请求
+message GetBalanceRequest {
+  // 用户ID（可选，默认从Context Token获取）
+  string user_id = 1;
+}
+
+// 获取余额响应
+message GetBalanceResponse {
+  // 用户ID
+  string user_id = 1;
+  // 当前可用余额
+  double balance = 2;
+  // 赠送余额
+  double gift_balance = 3;
+  // 历史累计消耗
+  double total_consumed = 4;
+}
+
+// 充值请求
+message RechargeRequest {
+  // 用户ID（可选，默认从Context Token获取）
+  string user_id = 1;
+  // 充值金额
+  double amount = 2 [(validate.rules).double.gt = 0];
+}
+
+// 充值响应
+message RechargeResponse {
+  // 用户ID
+  string user_id = 1;
+  // 当前可用余额
+  double balance = 2;
+  // 赠送余额
+  double gift_balance = 3;
+  // 历史累计消耗
+  double total_consumed = 4;
+}
+
+// 获取流水请求
+message ListLogsRequest {
+  // 用户ID（可选，默认从Context Token获取）
+  string user_id = 1;
+  // 页码（从 1 开始）
+  int32 page = 2;
+  // 每页条数
+  int32 limit = 3;
+}
+
+// 单条消费明细
+message UsageLogItem {
+  // 请求ID
+  string request_id = 1;
+  // 用户ID
+  string user_id = 2;
+  // 服务类型（embedding/rerank/openai等）
+  string service_type = 3;
+  // 供应商
+  string provider = 4;
+  // 模型名称
+  string model_name = 5;
+  // Prompt Token数
+  int32 prompt_tokens = 6;
+  // Completion Token数
+  int32 completion_tokens = 7;
+  // 总 Token 数
+  int32 total_tokens = 8;
+  // 处理文档数
+  int32 doc_count = 9;
+  // 本次消费总金额
+  double total_cost = 10;
+  // 状态 1-已扣费 2-已退款
+  int32 status = 11;
+  // 创建时间（毫秒时间戳）
+  int64 created_at = 12;
+}
+
+// 获取流水响应
+message ListLogsResponse {
+  // 总记录数
+  int64 total = 1;
+  // 当前页码
+  int32 page = 2;
+  // 每页限制
+  int32 limit = 3;
+  // 消费明细列表
+  repeated UsageLogItem logs = 4;
+}
+
+// 获取价格配置请求
+message GetPricingRequest {
+}
+
+// 模型单价配置
+message ModelPricing {
+  // 输入单价（每千 units）
+  double input_unit_price = 1;
+  // 输出单价（每千 units）
+  double output_unit_price = 2;
+  // 计费基数（默认 1000）
+  int32 unit_size = 3;
+}
+
+// 获取价格配置响应
+message GetPricingResponse {
+  // 模型价格映射 (model_name -> pricing)
+  map<string, ModelPricing> prices = 1;
+}

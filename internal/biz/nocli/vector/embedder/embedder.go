@@ -6,8 +6,10 @@ import (
 	"math"
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	bizCommon "ai-rag-demo/internal/biz/common"
 	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/log"
@@ -75,27 +77,30 @@ func (e *Embedder) Dimension() int {
 	return e.dimension
 }
 
-// GenerateEmbedding 为单条文本计算 Embedding
-func (e *Embedder) GenerateEmbedding(ctx context.Context, text string) ([]float32, error) {
-	vecs, err := e.BatchGenerateEmbeddings(ctx, []string{text})
+// GenerateEmbedding 为单条文本计算 Embedding，同时返回 OpenAI Token 消耗情况
+func (e *Embedder) GenerateEmbedding(ctx context.Context, text string) ([]float32, openai.Usage, error) {
+	vecs, usage, err := e.BatchGenerateEmbeddings(ctx, []string{text})
 	if err != nil {
-		return nil, err
+		return nil, usage, err
 	}
 	if len(vecs) == 0 {
-		return nil, fmt.Errorf("empty embedding response")
+		return nil, usage, fmt.Errorf("empty embedding response")
 	}
-	return vecs[0], nil
+	return vecs[0], usage, nil
 }
 
-// BatchGenerateEmbeddings 批量并发计算 Embedding，支持分批与并发度控制
-func (e *Embedder) BatchGenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, error) {
+// BatchGenerateEmbeddings 批量并发计算 Embedding，支持分批与并发度控制，并汇总返回详细 Token 消耗
+func (e *Embedder) BatchGenerateEmbeddings(ctx context.Context, texts []string) ([][]float32, openai.Usage, error) {
 	if len(texts) == 0 {
-		return nil, nil
+		return nil, openai.Usage{}, nil
 	}
 
 	batchSize := 20
 	total := len(texts)
 	results := make([][]float32, total)
+
+	var totalPromptTokens int32
+	var totalTokens int32
 
 	var wg sync.WaitGroup
 	var errOnce sync.Once
@@ -115,13 +120,16 @@ func (e *Embedder) BatchGenerateEmbeddings(ctx context.Context, texts []string) 
 		common.RunInGoroutine(ctx, func(gCtx context.Context) {
 			defer wg.Done()
 
-			vecs, err := e.callOpenAIEmbeddingWithRetry(gCtx, batchTexts)
+			vecs, bUsage, err := e.callOpenAIEmbeddingWithRetry(gCtx, batchTexts)
 			if err != nil {
 				errOnce.Do(func() {
 					firstErr = fmt.Errorf("batch embedding failed [%d:%d]: %w", startIndex, end, err)
 				})
 				return
 			}
+
+			atomic.AddInt32(&totalPromptTokens, int32(bUsage.PromptTokens))
+			atomic.AddInt32(&totalTokens, int32(bUsage.TotalTokens))
 
 			for idx, vec := range vecs {
 				results[startIndex+idx] = vec
@@ -131,14 +139,19 @@ func (e *Embedder) BatchGenerateEmbeddings(ctx context.Context, texts []string) 
 
 	wg.Wait()
 
-	if firstErr != nil {
-		return nil, firstErr
+	aggregatedUsage := openai.Usage{
+		PromptTokens: int(totalPromptTokens),
+		TotalTokens:  int(totalTokens),
 	}
 
-	return results, nil
+	if firstErr != nil {
+		return nil, aggregatedUsage, firstErr
+	}
+
+	return results, aggregatedUsage, nil
 }
 
-func (e *Embedder) callOpenAIEmbeddingWithRetry(ctx context.Context, texts []string) ([][]float32, error) {
+func (e *Embedder) callOpenAIEmbeddingWithRetry(ctx context.Context, texts []string) ([][]float32, openai.Usage, error) {
 	maxRetries := 3
 	var lastErr error
 
@@ -158,7 +171,7 @@ func (e *Embedder) callOpenAIEmbeddingWithRetry(ctx context.Context, texts []str
 			for _, item := range resp.Data {
 				vecs[item.Index] = item.Embedding
 			}
-			return vecs, nil
+			return vecs, resp.Usage, nil
 		}
 
 		lastErr = err
@@ -167,8 +180,14 @@ func (e *Embedder) callOpenAIEmbeddingWithRetry(ctx context.Context, texts []str
 		time.Sleep(backoff + time.Duration(rand.Intn(100))*time.Millisecond)
 	}
 
-	// 生产环境下模型服务可能未就绪，当真实 API 调用失败时降级返回伪向量 (Mock Vector for Demo/Fallback)
+	// 生产环境下模型服务可能未就绪，当真实 API 调用失败时降级返回伪向量 (Mock Vector for Demo/Fallback) 并使用基础 token 函数计算
 	log.Warnf(ctx, "Embedding API failed after retries, falling back to mock vectors: %v", lastErr)
+	fallbackTokens := int(bizCommon.CalculateTextTokens(texts...))
+	fallbackUsage := openai.Usage{
+		PromptTokens: fallbackTokens,
+		TotalTokens:  fallbackTokens,
+	}
+
 	mockVecs := make([][]float32, len(texts))
 	dim := e.Dimension()
 	for i := range texts {
@@ -178,5 +197,5 @@ func (e *Embedder) callOpenAIEmbeddingWithRetry(ctx context.Context, texts []str
 		}
 		mockVecs[i] = vec
 	}
-	return mockVecs, nil
+	return mockVecs, fallbackUsage, nil
 }

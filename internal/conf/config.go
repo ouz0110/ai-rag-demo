@@ -134,6 +134,17 @@ type RerankConfig struct {
 	Timeout int    `json:"timeout"`  // 硬超时时间 (毫秒，默认 1000ms)
 }
 
+type ModelPricingConfig struct {
+	InputUnitPrice  float64 `json:"input_unit_price" yaml:"input_unit_price"`   // 每千 units 单价
+	OutputUnitPrice float64 `json:"output_unit_price" yaml:"output_unit_price"` // 每千 units 输出单价 (适用于 openai)
+	UnitSize        int     `json:"unit_size" yaml:"unit_size"`                 // 计费单位 (默认 1000)
+}
+
+type BillingConfig struct {
+	Enable        bool                           `json:"enable" yaml:"enable"`
+	DefaultPrices map[string]*ModelPricingConfig `json:"default_prices" yaml:"default_prices"`
+}
+
 type RAGConfig struct {
 	KnowledgeDir   string           `json:"knowledge_dir"`   // 默认公共知识库文件目录
 	UploadDir      string           `json:"upload_dir"`      // 用户自主上传文件的存储目录
@@ -143,6 +154,7 @@ type RAGConfig struct {
 	Embedding      *EmbeddingConfig `json:"embedding"`       // 独立 Embedding AI 配置
 	Chunker        *ChunkerConfig   `json:"chunker"`         // 细粒度切片配置
 	Rerank         *RerankConfig    `json:"rerank"`          // 独立 Rerank 重排配置
+	Billing        *BillingConfig   `json:"billing"`         // 计费配置
 }
 
 type Config struct {

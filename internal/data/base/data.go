@@ -13,6 +13,7 @@ type DB struct {
 	NocliSessionRepo   NocliSessionRepo
 	NocliMessageRepo   NocliMessageRepo
 	NocliInterruptRepo NocliInterruptRepo
+	BillingRepo        BillingRepo
 }
 
 const dbName = "base"
@@ -30,5 +31,6 @@ func NewDB(c *conf.Config) *DB {
 		NocliSessionRepo:   NocliSessionRepo{TableRepo: database.NewTableRepo[*NocliSessionModel](db)},
 		NocliMessageRepo:   NocliMessageRepo{TableRepo: database.NewTableRepo[*NocliMessageModel](db)},
 		NocliInterruptRepo: NocliInterruptRepo{TableRepo: database.NewTableRepo[*NocliInterruptModel](db)},
+		BillingRepo:        BillingRepo{TableRepo: database.NewTableRepo[*BillingUsageLogModel](db)},
 	}
 }

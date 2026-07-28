@@ -16,7 +16,7 @@ import (
 	"ai-rag-demo/internal/pkg/i18n"
 	"ai-rag-demo/internal/pkg/utils"
 	"ai-rag-demo/internal/server/middleware"
-	"ai-rag-demo/internal/service/base"
+	baseService "ai-rag-demo/internal/service/base"
 	"ai-rag-demo/internal/service/nocli"
 
 	_ "net/http/pprof" // pprof support
@@ -44,9 +44,10 @@ var (
 func NewHTTPServer(
 	cfg *conf.Config,
 	cache *cache.Cache,
-	accountSrv *base.AccountService,
+	accountSrv *baseService.AccountService,
 	chatSrv *nocli.ChatService,
 	kbSrv *nocli.KBService,
+	billingSrv *baseService.BillingService,
 ) *transHttp.Server {
 	opts := wrapHTTPOptions(cfg, cache)
 	server := transHttp.NewServer(opts...)
@@ -56,15 +57,16 @@ func NewHTTPServer(
 	rootRouter.GET("/live", func(ctx transHttp.Context) error { return ctx.Result(http.StatusOK, nil) })
 	rootRouter.GET("/ready", func(ctx transHttp.Context) error { return ctx.Result(http.StatusOK, nil) })
 
-	// 🎯 显式注册 HTTP SSE 流式推导与恢复接口 (经过中间件链处理，确保包含鉴权 UserFromContext、日志与 Trace)
+	// 🎯 显式注册 HTTP SSE 流式推导与恢复接口
 	rootRouter.POST("/nocli/v1/stream/completion", wrapStreamHandler(cfg, cache, chatSrv.StreamCompletionHTTP))
 	rootRouter.POST("/nocli/v1/stream/resume", wrapStreamHandler(cfg, cache, chatSrv.StreamResumeHTTP))
 
-	// 🎯 注册独立文件上传 HTTP 接口 (经过 Kratos 全量中间件链处理，确保包含鉴权 UserFromContext、日志与 Trace)
+	// 🎯 注册独立文件上传 HTTP 接口
 	rootRouter.POST("/nocli/v1/rag/upload", wrapHTTPHandler(kbSrv.UploadFileHTTP))
 
-	// 注册账号服务
+	// 注册账号服务与 AI 计费服务
 	basepb.RegisterAccountsHTTPServer(server, accountSrv)
+	basepb.RegisterBillingHTTPServer(server, billingSrv)
 
 	// 注册 AI 对话服务与 Protobuf 知识库管理服务 (常规 Unary HTTP 接口)
 	noclipb.RegisterNocliChatHTTPServer(server, chatSrv)

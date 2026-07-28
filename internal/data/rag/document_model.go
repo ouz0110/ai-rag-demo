@@ -5,6 +5,8 @@ import (
 	"time"
 
 	"ai-rag-demo/internal/pkg/database"
+
+	"gorm.io/gorm"
 )
 
 // KnowledgeDocumentModel 知识库主文档表结构模型
@@ -26,6 +28,7 @@ type KnowledgeDocumentModel struct {
 	FileHash        string    `gorm:"type:varchar(64);index;comment:文件内容SHA256哈希"`                                     // 文件内容SHA256哈希
 	Status          int32     `gorm:"type:tinyint;default:0;comment:处理状态(0:待处理,1:解析中,2:已向量化,3:失败)"`                   // 处理状态
 	TotalChunks     int32     `gorm:"type:int;default:0;comment:总切片数"`                                                 // 总切片数
+	EmbeddingCost   float64   `gorm:"type:decimal(18,6);default:0.000000;comment:文档向量化花费金额"`                             // 文档向量化花费金额
 	ErrMsg          string    `gorm:"type:text;comment:失败异常信息"`                                                        // 失败异常信息
 	CreatedAt       time.Time `gorm:"autoCreateTime;comment:创建时间"`                                                     // 创建时间
 	UpdatedAt       time.Time `gorm:"autoUpdateTime;comment:更新时间"`                                                     // 更新时间
@@ -75,15 +78,19 @@ func (r *DocumentRepo) GetDocumentsByDocIDs(ctx context.Context, tenantID string
 	return result, nil
 }
 
-// UpdateDocumentStatus 更新文档处理状态
-func (r *DocumentRepo) UpdateDocumentStatus(ctx context.Context, tenantID, docID string, status int32, totalChunks int32, errMsg string) error {
+// UpdateDocumentStatus 更新文档处理状态及向量化花费
+func (r *DocumentRepo) UpdateDocumentStatus(ctx context.Context, tenantID, docID string, status int32, totalChunks int32, cost float64, errMsg string) error {
+	updates := map[string]interface{}{
+		"status":       status,
+		"total_chunks": totalChunks,
+		"err_msg":      errMsg,
+	}
+	if cost > 0 {
+		updates["embedding_cost"] = gorm.Expr("embedding_cost + ?", cost)
+	}
 	return r.GormDB(ctx).Model(&KnowledgeDocumentModel{}).
 		Where("tenant_id = ? AND doc_id = ?", tenantID, docID).
-		Updates(map[string]interface{}{
-			"status":       status,
-			"total_chunks": totalChunks,
-			"err_msg":      errMsg,
-		}).Error
+		Updates(updates).Error
 }
 
 // GetDocumentByFilePath 根据文件路径查询文档

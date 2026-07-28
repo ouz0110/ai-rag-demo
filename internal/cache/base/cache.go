@@ -9,8 +9,9 @@ import (
 )
 
 type Cache struct {
-	cfg *conf.Config
-	cli *redis.Client
+	cfg     *conf.Config
+	cli     *redis.Client
+	Billing *BillingCache
 }
 
 const cacheName = "base"
@@ -19,12 +20,16 @@ func NewCache(cfg *conf.Config) *Cache {
 	cli, err := conf.NewRedisClient(cacheName, cfg)
 	if err != nil {
 		fmt.Printf("Cache %s init err: %v\n", cacheName, err)
-		return nil
+		return &Cache{
+			cfg:     cfg,
+			Billing: NewBillingCache(nil),
+		}
 	}
 	fmt.Printf("Cache %s init success\n", cacheName)
 	return &Cache{
-		cli: cli,
-		cfg: cfg,
+		cli:     cli,
+		cfg:     cfg,
+		Billing: NewBillingCache(cli),
 	}
 }
 

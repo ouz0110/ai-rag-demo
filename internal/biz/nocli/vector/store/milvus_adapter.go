@@ -569,4 +569,3 @@ func (a *milvusAdapter) HybridSearch(ctx context.Context, collectionName string,
 
 	return results, nil
 }
-

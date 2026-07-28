@@ -59,9 +59,9 @@ func NewLLMReranker(cfg *conf.Config) *LLMReranker {
 	}
 }
 
-func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []*RerankCandidate) ([]*RerankCandidate, error) {
+func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []*RerankCandidate) ([]*RerankCandidate, openai.Usage, error) {
 	if len(candidates) <= 1 {
-		return candidates, nil
+		return candidates, openai.Usage{}, nil
 	}
 
 	// 1. 组装 LLM 打分 Prompt
@@ -98,11 +98,11 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []*Re
 
 	resp, err := r.client.CreateChatCompletion(ctx, req)
 	if err != nil {
-		return nil, fmt.Errorf("llm rerank request failed: %w", err)
+		return nil, openai.Usage{}, fmt.Errorf("llm rerank request failed: %w", err)
 	}
 
 	if len(resp.Choices) == 0 {
-		return nil, fmt.Errorf("empty llm rerank choices")
+		return nil, resp.Usage, fmt.Errorf("empty llm rerank choices")
 	}
 
 	rawText := strings.TrimSpace(resp.Choices[0].Message.Content)
@@ -115,7 +115,7 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []*Re
 	var scoreItems []llmScoreItem
 	if err := json.Unmarshal([]byte(rawText), &scoreItems); err != nil {
 		log.Warnf(ctx, "Parse LLM rerank JSON response error: %v, rawText: %s", err, rawText)
-		return candidates, nil // 解析失败降级返回原列表
+		return candidates, resp.Usage, nil // 解析失败降级返回原列表与真实 usage
 	}
 
 	scoreMap := make(map[string]float32)
@@ -138,5 +138,5 @@ func (r *LLMReranker) Rerank(ctx context.Context, query string, candidates []*Re
 		return results[i].Score > results[j].Score
 	})
 
-	return results, nil
+	return results, resp.Usage, nil
 }

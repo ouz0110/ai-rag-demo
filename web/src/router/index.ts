@@ -37,6 +37,11 @@ const routes = [
         name: 'KBView',
         component: KBView,
       },
+      {
+        path: 'billing',
+        name: 'BillingView',
+        component: () => import('../views/BillingView.vue'),
+      },
     ],
   },
   {

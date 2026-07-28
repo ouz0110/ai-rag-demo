@@ -22,6 +22,11 @@
           <Database :size="16" />
           <span>知识库管理中心</span>
         </router-link>
+
+        <router-link to="/billing" class="billing-workbench-btn">
+          <CreditCard :size="16" />
+          <span>AI 计费与资产中心</span>
+        </router-link>
       </div>
     </div>
 
@@ -95,7 +100,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bot, Plus, MessageSquare, Trash2, LogOut, Loader2, Database } from 'lucide-vue-next';
+import { Bot, Plus, MessageSquare, Trash2, LogOut, Loader2, Database, CreditCard } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat';
 import { useUserStore } from '../../stores/user';
 import { SessionStatus } from '../../types/api';
@@ -257,10 +262,36 @@ async function handleLogout() {
   text-decoration: none;
 }
 
-.kb-workbench-btn:hover {
+.kb-workbench-btn:hover,
+.kb-workbench-btn.router-link-active {
   background: rgba(6, 182, 212, 0.15);
   border-color: rgba(6, 182, 212, 0.4);
   color: #22d3ee;
+}
+
+.billing-workbench-btn {
+  width: 100%;
+  height: 36px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #94a3b8;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.billing-workbench-btn:hover,
+.billing-workbench-btn.router-link-active {
+  background: rgba(168, 85, 247, 0.15);
+  border-color: rgba(168, 85, 247, 0.4);
+  color: #c084fc;
 }
 
 /* 列表区 */

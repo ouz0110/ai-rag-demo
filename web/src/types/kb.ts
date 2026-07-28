@@ -19,6 +19,7 @@ export interface KnowledgeDocument {
   is_active?: number;
   source_url?: string;
   total_chunks: number;
+  embedding_cost?: number;
   status: number; // 0:待处理, 1:解析中, 2:已向量化, 3:失败
   err_msg?: string;
   file_path?: string;

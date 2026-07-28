@@ -10,59 +10,55 @@ import (
 	"ai-rag-demo/internal/conf"
 
 	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 )
 
-// SemanticChunker 两阶段语义感知动态边界切片算子 (基于 512 字符底包 + 向量余弦相似度动态合并与话题断层切割)
+// SemanticChunker 两阶段语义感知动态切片算子
 type SemanticChunker struct {
-	BaseChunkSize  int                // 原子底包目标字符数 (默认 512)
-	MaxChunkSize   int                // 合并后 Parent 块上限字符数 (默认 1500)
-	MergeThreshold float32            // 高相似度合并阈值 (默认 0.75)
-	SplitThreshold float32            // 话题断层切割阈值 (默认 0.45)
+	MaxChunkSize   int                // 单个 Parent Chunk 的硬上限限制 (如 1200 字符)
+	BaseChunkSize  int                // 底包原子 Block 期望长度 (如 512 字符)
+	SplitThreshold float64            // 语义断层切割阈值 (余弦相似度低于该值执行话题切割，如 0.65)
 	embedder       *embedder.Embedder // 向量 Embedding 计算器
 }
 
-// NewSemanticChunkerFromConfig 根据 Config 配置初始化语义感知动态切片算子
+// NewSemanticChunkerFromConfig 从 Config 配置句柄创建 SemanticChunker
 func NewSemanticChunkerFromConfig(cfg *conf.Config, emb *embedder.Embedder) *SemanticChunker {
-	bSize := 512
-	mSize := 1500
-	mThreshold := float32(0.75)
-	sThreshold := float32(0.45)
+	maxSize := 1200
+	baseSize := 512
+	sThreshold := 0.65
 
 	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Chunker != nil {
-		if cfg.Source.RAG.Chunker.ChildSize > 0 {
-			bSize = cfg.Source.RAG.Chunker.ChildSize
+		cCfg := cfg.Source.RAG.Chunker
+		if cCfg.ParentSize > 0 {
+			maxSize = cCfg.ParentSize
 		}
-		if cfg.Source.RAG.Chunker.ParentSize > 0 {
-			mSize = cfg.Source.RAG.Chunker.ParentSize
+		if cCfg.ChildSize > 0 {
+			baseSize = cCfg.ChildSize
 		}
-		if cfg.Source.RAG.Chunker.MergeThreshold > 0 {
-			mThreshold = cfg.Source.RAG.Chunker.MergeThreshold
-		}
-		if cfg.Source.RAG.Chunker.SplitThreshold > 0 {
-			sThreshold = cfg.Source.RAG.Chunker.SplitThreshold
+		if cCfg.SplitThreshold > 0 {
+			sThreshold = float64(cCfg.SplitThreshold)
 		}
 	}
 
 	return &SemanticChunker{
-		BaseChunkSize:  bSize,
-		MaxChunkSize:   mSize,
-		MergeThreshold: mThreshold,
+		MaxChunkSize:   maxSize,
+		BaseChunkSize:  baseSize,
 		SplitThreshold: sThreshold,
 		embedder:       emb,
 	}
 }
 
-// SplitWithSemantics 执行两阶段语义感知动态切片算法
-func (c *SemanticChunker) SplitWithSemantics(ctx context.Context, text string) (*ParentChildResult, error) {
+// SplitWithSemantics 执行两阶段语义感知动态切片算法，并返回过程中的 Token Usage 消耗
+func (c *SemanticChunker) SplitWithSemantics(ctx context.Context, text string) (*ParentChildResult, openai.Usage, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
-		return &ParentChildResult{}, nil
+		return &ParentChildResult{}, openai.Usage{}, nil
 	}
 
 	// 阶段 1：使用递归字符切分算法将长文档切成 512 字符左右的原子“底包”
 	baseChunks := c.recursiveSplit(text, c.BaseChunkSize)
 	if len(baseChunks) == 0 {
-		return &ParentChildResult{}, nil
+		return &ParentChildResult{}, openai.Usage{}, nil
 	}
 	if len(baseChunks) == 1 {
 		pID := fmt.Sprintf("p_%s", uuid.New().String())
@@ -72,15 +68,15 @@ func (c *SemanticChunker) SplitWithSemantics(ctx context.Context, text string) (
 		return &ParentChildResult{
 			ParentChunks: []*ChunkUnit{unitP},
 			ChildChunks:  []*ChunkUnit{unitC},
-		}, nil
+		}, openai.Usage{}, nil
 	}
 
 	// 阶段 2：批量计算所有底包的 Embedding 向量
-	vectors, err := c.embedder.BatchGenerateEmbeddings(ctx, baseChunks)
+	vectors, semUsage, err := c.embedder.BatchGenerateEmbeddings(ctx, baseChunks)
 	if err != nil || len(vectors) != len(baseChunks) {
 		// 若向量生成失败，降级回退到静态规则切分
 		staticChunker := NewStaticChunker(c.MaxChunkSize, c.BaseChunkSize, 30)
-		return staticChunker.Split(text), nil
+		return staticChunker.Split(text), semUsage, nil
 	}
 
 	// 阶段 3 & 4：计算相邻底包余弦相似度，高相似度合并，低相似度话题断层切割
@@ -110,69 +106,64 @@ func (c *SemanticChunker) SplitWithSemantics(ctx context.Context, text string) (
 		}
 		currentParentBuilder.WriteString(baseChunks[i])
 
+		// 判断是否需要切割 Parent Chunk
+		shouldSplit := false
 		if i < len(baseChunks)-1 {
 			sim := cosineSimilarity(vectors[i], vectors[i+1])
-			nextLen := len([]rune(baseChunks[i+1]))
-			currLen := len([]rune(currentParentBuilder.String()))
-
-			shouldSplit := sim < c.SplitThreshold || (currLen+nextLen > c.MaxChunkSize)
-			if !shouldSplit && sim < c.MergeThreshold && currLen >= c.BaseChunkSize {
-				shouldSplit = true
-			}
-
-			if shouldSplit {
-				parentUnit := &ChunkUnit{
-					ChunkID:    currentParentID,
-					ParentID:   "",
-					Content:    currentParentBuilder.String(),
-					ChunkIndex: int32(parentIndex),
-					TokenCount: int32(len([]rune(currentParentBuilder.String()))),
-					IsParent:   true,
-				}
-				parentUnits = append(parentUnits, parentUnit)
-				parentIndex++
-
-				currentParentBuilder.Reset()
-				currentParentID = fmt.Sprintf("p_%s", uuid.New().String())
+			if sim < float32(c.SplitThreshold) {
+				shouldSplit = true // 余弦相似度低于阈值，判断为话题断层，执行切割
 			}
 		} else {
+			shouldSplit = true // 最后一个 chunk 自动闭合当前 Parent
+		}
+
+		// 容忍度校验：若当前 Parent 内容已接近/超过 MaxChunkSize，强制切割
+		if currentParentBuilder.Len() >= c.MaxChunkSize {
+			shouldSplit = true
+		}
+
+		if shouldSplit {
+			pContent := currentParentBuilder.String()
 			parentUnit := &ChunkUnit{
 				ChunkID:    currentParentID,
-				ParentID:   "",
-				Content:    currentParentBuilder.String(),
+				Content:    pContent,
 				ChunkIndex: int32(parentIndex),
-				TokenCount: int32(len([]rune(currentParentBuilder.String()))),
+				TokenCount: int32(len([]rune(pContent))),
 				IsParent:   true,
 			}
 			parentUnits = append(parentUnits, parentUnit)
+			parentIndex++
+
+			// 重置 Builder 与 ID 准备开启下一个 Parent Chunk
+			currentParentBuilder.Reset()
+			currentParentID = fmt.Sprintf("p_%s", uuid.New().String())
 		}
 	}
 
 	return &ParentChildResult{
 		ParentChunks: parentUnits,
 		ChildChunks:  childUnits,
-	}, nil
+	}, semUsage, nil
 }
 
-// recursiveSplit 递归字符切割算法 (分隔符优先级: 段落 > 句子 > 词/字)
+// recursiveSplit 递归字符切分算法实现
 func (c *SemanticChunker) recursiveSplit(text string, targetSize int) []string {
-	separators := []string{"\n\n", "\n", "。", "！", "？", "；", ". ", "! ", "? ", " ", ""}
-	return c.splitTextBySeparators(text, targetSize, separators)
+	separators := []string{"\n\n", "\n", "。", "！", "？", ".", "!", "?", " ", ""}
+	return c.splitText(text, targetSize, separators)
 }
 
-func (c *SemanticChunker) splitTextBySeparators(text string, targetSize int, separators []string) []string {
-	text = strings.TrimSpace(text)
+func (c *SemanticChunker) splitText(text string, targetSize int, separators []string) []string {
 	if len([]rune(text)) <= targetSize || len(separators) == 0 {
-		if text != "" {
-			return []string{text}
+		if strings.TrimSpace(text) == "" {
+			return nil
 		}
-		return nil
+		return []string{text}
 	}
 
 	sep := separators[0]
 	nextSeparators := separators[1:]
+	var parts []string
 
-	var splits []string
 	if sep == "" {
 		runes := []rune(text)
 		for i := 0; i < len(runes); i += targetSize {
@@ -180,62 +171,70 @@ func (c *SemanticChunker) splitTextBySeparators(text string, targetSize int, sep
 			if end > len(runes) {
 				end = len(runes)
 			}
-			splits = append(splits, string(runes[i:end]))
+			parts = append(parts, string(runes[i:end]))
 		}
-		return splits
+	} else {
+		parts = strings.Split(text, sep)
 	}
 
-	parts := strings.Split(text, sep)
-	var currentChunk strings.Builder
+	var result []string
+	var currentBuilder strings.Builder
 
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
 		}
 
-		if len([]rune(part)) > targetSize {
-			if currentChunk.Len() > 0 {
-				splits = append(splits, currentChunk.String())
-				currentChunk.Reset()
+		partLen := len([]rune(part))
+		if partLen > targetSize {
+			if currentBuilder.Len() > 0 {
+				result = append(result, currentBuilder.String())
+				currentBuilder.Reset()
 			}
-			subSplits := c.splitTextBySeparators(part, targetSize, nextSeparators)
-			splits = append(splits, subSplits...)
+			subParts := c.splitText(part, targetSize, nextSeparators)
+			result = append(result, subParts...)
 			continue
 		}
 
-		if currentChunk.Len()+len([]rune(part))+len([]rune(sep)) > targetSize {
-			if currentChunk.Len() > 0 {
-				splits = append(splits, currentChunk.String())
-				currentChunk.Reset()
-			}
+		if currentBuilder.Len()+partLen+1 > targetSize {
+			result = append(result, currentBuilder.String())
+			currentBuilder.Reset()
 		}
 
-		if currentChunk.Len() > 0 {
-			currentChunk.WriteString(sep)
+		if currentBuilder.Len() > 0 {
+			currentBuilder.WriteString(sep)
 		}
-		currentChunk.WriteString(part)
+		currentBuilder.WriteString(part)
 	}
 
-	if currentChunk.Len() > 0 {
-		splits = append(splits, currentChunk.String())
+	if currentBuilder.Len() > 0 {
+		result = append(result, currentBuilder.String())
 	}
 
-	return splits
+	return result
 }
 
-func cosineSimilarity(a, b []float32) float32 {
-	if len(a) != len(b) || len(a) == 0 {
+// cosineSimilarity 计算两个 32 位浮点向量的余弦相似度
+func cosineSimilarity(v1, v2 []float32) float32 {
+	if len(v1) == 0 || len(v2) == 0 || len(v1) != len(v2) {
 		return 0
 	}
-	var dotProduct, normA, normB float64
-	for i := 0; i < len(a); i++ {
-		dotProduct += float64(a[i]) * float64(b[i])
-		normA += float64(a[i]) * float64(a[i])
-		normB += float64(b[i]) * float64(b[i])
+
+	var dotProduct float64
+	var normA float64
+	var normB float64
+
+	for i := 0; i < len(v1); i++ {
+		a := float64(v1[i])
+		b := float64(v2[i])
+		dotProduct += a * b
+		normA += a * a
+		normB += b * b
 	}
+
 	if normA == 0 || normB == 0 {
 		return 0
 	}
+
 	return float32(dotProduct / (math.Sqrt(normA) * math.Sqrt(normB)))
 }

@@ -347,11 +347,16 @@
                     </div>
                   </td>
 
-                  <!-- 向量切片数 -->
+                  <!-- 向量切片数与花费 -->
                   <td class="font-mono">
-                    <span class="px-2.5 py-1 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-bold">
-                      {{ doc.total_chunks }} chunks
-                    </span>
+                    <div class="flex flex-col gap-1">
+                      <span class="px-2.5 py-0.5 rounded-lg bg-cyan-500/10 border border-cyan-500/20 text-cyan-300 text-xs font-bold w-max">
+                        {{ doc.total_chunks }} chunks
+                      </span>
+                      <span class="text-[11px] text-emerald-400 font-semibold">
+                        花费: ￥{{ (doc.embedding_cost || 0).toFixed(6) }}
+                      </span>
+                    </div>
                   </td>
 
                   <!-- SHA256 哈希 -->

@@ -1,10 +1,9 @@
-package base
+package common
 
 import (
 	"github.com/google/wire"
 )
 
 var ProviderSet = wire.NewSet(
-	NewAccountBiz,
-	NewBillingBiz,
+	NewUsageRecorder,
 )

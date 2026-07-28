@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	bizCommon "ai-rag-demo/internal/biz/common"
 	"ai-rag-demo/internal/biz/nocli/vector/chunker"
 	"ai-rag-demo/internal/biz/nocli/vector/embedder"
 	"ai-rag-demo/internal/biz/nocli/vector/parser"
@@ -20,10 +21,12 @@ import (
 	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
+	dataBase "ai-rag-demo/internal/data/base"
 	ragData "ai-rag-demo/internal/data/rag"
 	"ai-rag-demo/internal/pkg/log"
 
 	"github.com/google/uuid"
+	openai "github.com/sashabaranov/go-openai"
 	"github.com/samber/lo"
 )
 
@@ -49,12 +52,14 @@ type VectorEngine struct {
 	retriever       *retriever.HybridRetriever  // 混合检索与 RRF 融合执行器
 	reranker        rerank.Reranker             // 独立 Rerank 重排策略 (支持 LLM / BGE)
 	parserFactory   *parser.ParserFactory       // 异构文件格式解析策略工厂
+	usageRecorder   *bizCommon.UsageRecorder    // AI 计费与 Usage 扣费记录器
 }
 
 func NewVectorEngine(
 	cfg *conf.Config,
 	vectorStore vectorData.VectorStore,
 	ragDB *data.DB,
+	usageRecorder *bizCommon.UsageRecorder,
 ) *VectorEngine {
 	emb := embedder.NewEmbedder(cfg)
 	chk := chunker.NewStaticChunkerFromConfig(cfg)
@@ -73,6 +78,7 @@ func NewVectorEngine(
 		retriever:       ret,
 		reranker:        rrk,
 		parserFactory:   pFactory,
+		usageRecorder:   usageRecorder,
 	}
 
 	// 启动时判断配置，若开启 auto_reload，使用 safe goroutine 异步扫描重载知识库目录
@@ -178,6 +184,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 
 	// 2. 【生产级关键项】：优先使用结构语法树算子 (HierarchicalChunker) 进行三层架构切片
 	var splitRes *chunker.ParentChildResult
+	var chunkingUsage openai.Usage
 	hChunker := chunker.NewHierarchicalChunker(800, 50)
 	if parsedDoc != nil && len(parsedDoc.Sections) > 0 {
 		splitRes = hChunker.SplitFromAST(parsedDoc)
@@ -189,9 +196,10 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 			flattenedText = parsedDoc.Content
 		}
 		if e.semanticChunker != nil {
-			semRes, semErr := e.semanticChunker.SplitWithSemantics(ctx, flattenedText)
+			semRes, semUsage, semErr := e.semanticChunker.SplitWithSemantics(ctx, flattenedText)
 			if semErr == nil && semRes != nil && len(semRes.ChildChunks) > 0 {
 				splitRes = semRes
+				chunkingUsage = semUsage
 			}
 		}
 		if splitRes == nil {
@@ -265,7 +273,7 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 	}
 
 	if err := e.allDB.Rag.ChunkRepo.BatchCreateChunks(ctx, chunkModels); err != nil {
-		_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
+		_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, 0.0, err.Error())
 		return nil, fmt.Errorf("batch save chunks error: %w", err)
 	}
 
@@ -275,9 +283,9 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		childTexts[i] = c.Content
 	}
 
-	vectors, err := e.embedder.BatchGenerateEmbeddings(ctx, childTexts)
+	vectors, embUsage, err := e.embedder.BatchGenerateEmbeddings(ctx, childTexts)
 	if err != nil {
-		_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
+		_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, 0.0, err.Error())
 		return nil, fmt.Errorf("generate embeddings error: %w", err)
 	}
 
@@ -309,18 +317,48 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		}
 		_ = e.vectorStore.CreateCollection(ctx, collectionName, dim)
 		if err := e.vectorStore.Upsert(ctx, collectionName, vecDocs); err != nil {
-			_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, err.Error())
+			_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 3, 0, 0.0, err.Error())
 			return nil, fmt.Errorf("upsert vector store error: %w", err)
 		}
 	}
 
-	// 更新 Hash 与状态
+	// 向量化 Token 计算与 AI 扣费 (汇总语义动态切片阶段与向量生成阶段的准确 Usage 详细消耗落盘)
+	totalEmbUsage := openai.Usage{
+		PromptTokens:     embUsage.PromptTokens + chunkingUsage.PromptTokens,
+		CompletionTokens: embUsage.CompletionTokens + chunkingUsage.CompletionTokens,
+		TotalTokens:      embUsage.TotalTokens + chunkingUsage.TotalTokens,
+	}
+
+	var embeddingCost float64
+	if e.usageRecorder != nil {
+		modelName := "qwen3-embedding:4b"
+		if e.cfg != nil && e.cfg.Source.RAG != nil && e.cfg.Source.RAG.Embedding != nil && e.cfg.Source.RAG.Embedding.Model != "" {
+			modelName = e.cfg.Source.RAG.Embedding.Model
+		}
+
+		reqID := fmt.Sprintf("emb_%s_%d", doc.DocID, time.Now().UnixNano())
+		cost, _ := e.usageRecorder.RecordOpenAIUsage(
+			ctx,
+			reqID,
+			doc.TenantID,
+			dataBase.ServiceTypeEmbedding,
+			"openai",
+			modelName,
+			totalEmbUsage,
+			int32(len(childTexts)),
+		)
+		embeddingCost = cost
+	}
+
+	// 更新 Hash、状态及向量化花费
+	_ = e.allDB.Rag.DocRepo.UpdateDocumentStatus(ctx, doc.TenantID, doc.DocID, 2, int32(totalChunks), embeddingCost, "")
 	_ = e.allDB.Rag.DocRepo.UpdateDocumentHash(ctx, doc.TenantID, doc.DocID, contentHash, 2, int32(totalChunks))
 	doc.FileHash = contentHash
 	doc.Status = 2
 	doc.TotalChunks = int32(totalChunks)
+	doc.EmbeddingCost += embeddingCost
 
-	log.Infof(ctx, "Document [%s] (%s) ingested successfully with %d child chunks.", doc.Title, doc.DocID, totalChunks)
+	log.Infof(ctx, "Document [%s] (%s) ingested successfully with %d child chunks, embedding cost: %.6f.", doc.Title, doc.DocID, totalChunks, embeddingCost)
 	return doc, nil
 }
 
@@ -451,7 +489,7 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 	defer cancel()
 
 	// 1. 生成 Query 的 Embedding 向量
-	queryVec, err := e.embedder.GenerateEmbedding(retCtx, queryText)
+	queryVec, _, err := e.embedder.GenerateEmbedding(retCtx, queryText)
 	if err != nil {
 		log.Warnf(ctx, "Generate query embedding failed or timed out: %v", err)
 		return nil, fmt.Errorf("generate query embedding failed: %w", err)
@@ -556,7 +594,7 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 	}
 
 	if e.reranker != nil && len(rerankCandidates) > 1 {
-		reranked, rErr := e.reranker.Rerank(retCtx, queryText, rerankCandidates)
+		reranked, rrkUsage, rErr := e.reranker.Rerank(retCtx, queryText, rerankCandidates)
 		if rErr != nil {
 			log.Warnf(ctx, "Reranker failed: %v, fallback to un-reranked order", rErr)
 		} else if len(reranked) > 0 {
@@ -569,6 +607,27 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 				s2 := rerankedMap[uniqueParents[j].parentID]
 				return s1 > s2
 			})
+
+			// 记录 Rerank AI 消耗计费 (使用 CreateChatCompletion 返回的准确 Usage 详细消耗落盘)
+			if e.usageRecorder != nil {
+				modelName := "bbjson/bge-reranker-base:latest"
+				if e.cfg != nil && e.cfg.Source.RAG != nil && e.cfg.Source.RAG.Rerank != nil && e.cfg.Source.RAG.Rerank.Model != "" {
+					modelName = e.cfg.Source.RAG.Rerank.Model
+				}
+				reqID := fmt.Sprintf("rrk_%d", time.Now().UnixNano())
+				common.RunInGoroutine(ctx, func(gCtx context.Context) {
+					_, _ = e.usageRecorder.RecordOpenAIUsage(
+						gCtx,
+						reqID,
+						tenantID,
+						dataBase.ServiceTypeRerank,
+						"openai",
+						modelName,
+						rrkUsage,
+						int32(len(rerankCandidates)),
+					)
+				})
+			}
 		}
 	}
 
