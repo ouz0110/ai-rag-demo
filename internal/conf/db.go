@@ -16,9 +16,9 @@ func NewDB(name string, c *Config, autoMigrateTables ...interface{}) (*database.
 	}
 
 	var logger gormlogger.Interface = log.NewGormLogger(fmt.Sprintf("gorm-%s", name))
-	if IsTestEnv() {
-		logger = gormlogger.Default.LogMode(gormlogger.Info)
-	}
+	// if IsTestEnv() {
+	// 	logger = gormlogger.Default.LogMode(gormlogger.Info)
+	// }
 	databaseCli, err := database.New(&database.Config{
 		Source:       dbCfg.Source,
 		Ca:           dbCfg.Ca,

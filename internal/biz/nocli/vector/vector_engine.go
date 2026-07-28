@@ -23,6 +23,7 @@ import (
 	"ai-rag-demo/internal/pkg/log"
 
 	"github.com/google/uuid"
+	"github.com/samber/lo"
 )
 
 // RAGContext 最终输出给 LLM 组装 Prompt 的上下文数据结构
@@ -522,13 +523,13 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		}
 	}
 
-	parentModelMap, err := e.allDB.Rag.ChunkRepo.GetParentChunkModelsByParentIDs(ctx, tenantID, parentIDs)
+	parentModelMap, err := e.allDB.Rag.ChunkRepo.GetParentChunkModelsByParentIDs(ctx, tenantID, lo.Uniq(parentIDs))
 	if err != nil {
 		log.Warnf(ctx, "Fetch parent chunk models from mysql error: %v", err)
 		parentModelMap = make(map[string]*ragData.KnowledgeChunkModel)
 	}
 
-	docModelMap, err := e.allDB.Rag.DocRepo.GetDocumentsByDocIDs(ctx, tenantID, docIDs)
+	docModelMap, err := e.allDB.Rag.DocRepo.GetDocumentsByDocIDs(ctx, tenantID, lo.Uniq(docIDs))
 	if err != nil {
 		log.Warnf(ctx, "Fetch doc models from mysql error: %v", err)
 		docModelMap = make(map[string]*ragData.KnowledgeDocumentModel)
