@@ -34,10 +34,40 @@ func (p *JSONParser) Parse(ctx context.Context, r io.Reader, filename string) (*
 	var builder strings.Builder
 	p.formatValue(&builder, "", raw)
 
+	content := builder.String()
+	secID := "sec_json"
+	sec := &DocumentSection{
+		SectionID:   secID,
+		H1:          filename,
+		TitlePath:   filename,
+		FullContent: content,
+		StartLine:   1,
+		LeafNodes: []*DocNode{
+			{
+				NodeID:    "node_json",
+				ParentID:  secID,
+				Type:      NodeParagraph,
+				Content:   content,
+				StartLine: 1,
+			},
+		},
+	}
+	rootNode := &DocNode{
+		NodeID:    "root",
+		Type:      NodeRoot,
+		Title:     filename,
+		StartLine: 1,
+		Children:  sec.LeafNodes,
+	}
+
 	return &ParsedDocument{
+		DocID:      secID,
 		Title:      filename,
 		SourceType: "json",
-		Content:    builder.String(),
+		Content:    content,
+		RawContent: content,
+		Root:       rootNode,
+		Sections:   []*DocumentSection{sec},
 		Metadata: map[string]string{
 			"parser": "json_flatten_parser",
 		},

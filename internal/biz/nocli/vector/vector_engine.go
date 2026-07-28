@@ -168,25 +168,33 @@ func (e *VectorEngine) IngestFileIncremental(ctx context.Context, tenantID, kbID
 }
 
 func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.KnowledgeDocumentModel, rawContent, contentHash, absPath, collectionName string) (*ragData.KnowledgeDocumentModel, error) {
-	// 1. 调用策略工厂匹配对应格式的 DocumentParser 进行差异化解析 (如 CSV 扁平化、JSON 结构树转换、TXT 纯文本)
+	// 1. 调用策略工厂匹配对应格式的 DocumentParser 进行结构化/语法树解析 (如 MD AST, CSV 展平等)
 	parsedDoc, err := e.parserFactory.GetParser(doc.Title).Parse(ctx, strings.NewReader(rawContent), doc.Title)
-	flattenedText := rawContent
-	if err == nil && parsedDoc != nil && parsedDoc.Content != "" {
-		flattenedText = parsedDoc.Content
+	if err != nil {
+		log.Warnf(ctx, "Parser failed for [%s]: %v, fallback to raw text", doc.Title, err)
 	}
 
-	// 2. 【生产级关键项】：优先执行两阶段语义感知动态边界切片 (底包 512 字符 + 余弦相似度高分合并/话题断层割断)
+	// 2. 【生产级关键项】：优先使用结构语法树算子 (HierarchicalChunker) 进行三层架构切片
 	var splitRes *chunker.ParentChildResult
-	if e.semanticChunker != nil {
-		semRes, semErr := e.semanticChunker.SplitWithSemantics(ctx, flattenedText)
-		if semErr == nil && semRes != nil && len(semRes.ChildChunks) > 0 {
-			splitRes = semRes
-		} else if semErr != nil {
-			log.Warnf(ctx, "Semantic chunker failed: %v, falling back to standard ParentChildChunker", semErr)
-		}
+	hChunker := chunker.NewHierarchicalChunker(800, 50)
+	if parsedDoc != nil && len(parsedDoc.Sections) > 0 {
+		splitRes = hChunker.SplitFromAST(parsedDoc)
 	}
-	if splitRes == nil {
-		splitRes = e.staticChunker.Split(flattenedText)
+
+	if splitRes == nil || len(splitRes.ChildChunks) == 0 {
+		flattenedText := rawContent
+		if parsedDoc != nil && parsedDoc.Content != "" {
+			flattenedText = parsedDoc.Content
+		}
+		if e.semanticChunker != nil {
+			semRes, semErr := e.semanticChunker.SplitWithSemantics(ctx, flattenedText)
+			if semErr == nil && semRes != nil && len(semRes.ChildChunks) > 0 {
+				splitRes = semRes
+			}
+		}
+		if splitRes == nil {
+			splitRes = e.staticChunker.Split(flattenedText)
+		}
 	}
 	totalChunks := len(splitRes.ChildChunks)
 
@@ -198,18 +206,29 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 		c.Content = chunker.InjectMetadataPrefix(doc.Title, c.Content)
 	}
 
-	// 构造 MySQL 块 (附带切片 SHA256 Hash 与类型)
+	// 构造 MySQL 块 (附带 H1~H3, 行号, 表格/代码块标记, 切片 SHA256 Hash 与类型)
 	chunkModels := make([]*ragData.KnowledgeChunkModel, 0, len(splitRes.ParentChunks)+len(splitRes.ChildChunks))
 	for _, p := range splitRes.ParentChunks {
 		pHash := CalculateContentHash([]byte(p.Content))
+		cType := p.ChunkType
+		if cType == "" {
+			cType = "parent"
+		}
 		chunkModels = append(chunkModels, &ragData.KnowledgeChunkModel{
 			TenantID:     doc.TenantID,
 			DocID:        doc.DocID,
 			ChunkID:      p.ChunkID,
 			ParentID:     "",
+			H1:           p.H1,
+			H2:           p.H2,
+			H3:           p.H3,
+			StartLine:    p.StartLine,
+			EndLine:      p.EndLine,
+			HasTable:     p.HasTable,
+			HasCode:      p.HasCode,
 			ChunkIndex:   p.ChunkIndex,
 			ChunkHash:    pHash,
-			ChunkType:    "text",
+			ChunkType:    cType,
 			Content:      p.Content,
 			TokenCount:   p.TokenCount,
 			VectorStatus: 0,
@@ -218,14 +237,25 @@ func (e *VectorEngine) processAndSaveDocument(ctx context.Context, doc *ragData.
 	}
 	for _, c := range splitRes.ChildChunks {
 		cHash := CalculateContentHash([]byte(c.Content))
+		cType := c.ChunkType
+		if cType == "" {
+			cType = "text"
+		}
 		chunkModels = append(chunkModels, &ragData.KnowledgeChunkModel{
 			TenantID:     doc.TenantID,
 			DocID:        doc.DocID,
 			ChunkID:      c.ChunkID,
 			ParentID:     c.ParentID,
+			H1:           c.H1,
+			H2:           c.H2,
+			H3:           c.H3,
+			StartLine:    c.StartLine,
+			EndLine:      c.EndLine,
+			HasTable:     c.HasTable,
+			HasCode:      c.HasCode,
 			ChunkIndex:   c.ChunkIndex,
 			ChunkHash:    cHash,
-			ChunkType:    "text",
+			ChunkType:    cType,
 			Content:      c.Content,
 			TokenCount:   c.TokenCount,
 			VectorStatus: 1,

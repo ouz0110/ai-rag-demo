@@ -65,10 +65,40 @@ func (p *CSVParser) Parse(ctx context.Context, r io.Reader, filename string) (*P
 		builder.WriteString("。\n")
 	}
 
+	content := builder.String()
+	secID := "sec_csv"
+	sec := &DocumentSection{
+		SectionID:   secID,
+		H1:          filename,
+		TitlePath:   filename,
+		FullContent: content,
+		StartLine:   1,
+		LeafNodes: []*DocNode{
+			{
+				NodeID:    "node_csv",
+				ParentID:  secID,
+				Type:      NodeTable,
+				Content:   content,
+				StartLine: 1,
+			},
+		},
+	}
+	rootNode := &DocNode{
+		NodeID:    "root",
+		Type:      NodeRoot,
+		Title:     filename,
+		StartLine: 1,
+		Children:  sec.LeafNodes,
+	}
+
 	return &ParsedDocument{
+		DocID:      secID,
 		Title:      filename,
 		SourceType: "csv",
-		Content:    builder.String(),
+		Content:    content,
+		RawContent: content,
+		Root:       rootNode,
+		Sections:   []*DocumentSection{sec},
 		Metadata: map[string]string{
 			"parser": "csv_table_flatten_parser",
 		},

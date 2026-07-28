@@ -13,14 +13,15 @@ type ParserFactory struct {
 
 func NewParserFactory() *ParserFactory {
 	txtParser := NewTextParser()
+	mdParser := NewMarkdownParser()
 	csvParser := NewCSVParser()
 	jsonParser := NewJSONParser()
 
 	return &ParserFactory{
 		parsers: map[string]DocumentParser{
 			"txt":      txtParser,
-			"md":       txtParser,
-			"markdown": txtParser,
+			"md":       mdParser,
+			"markdown": mdParser,
 			"csv":      csvParser,
 			"tsv":      csvParser,
 			"json":     jsonParser,
