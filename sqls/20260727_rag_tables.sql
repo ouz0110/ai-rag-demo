@@ -1,7 +1,7 @@
 -- =================================================================================
 -- 生产级 RAG 知识库系统 数据库建表 DDL
 -- 数据库字符集: utf8mb4 / utf8mb4_general_ci
--- 创建时间: 2026-07-27
+-- 创建时间: 2026-07-27 (更新时间: 2026-07-28 结构化 AST 扩展)
 -- =================================================================================
 
 -- 1. 知识库主表 (Knowledge Base Table)
@@ -55,16 +55,23 @@ CREATE TABLE IF NOT EXISTS `knowledge_documents` (
 
 
 -- 3. 知识库文档切片表 (Knowledge Chunk Table)
--- 存储 Parent 粗粒度上下文、Child 切片映射、切片 Hash 及生效状态
+-- 存储 Parent 粗粒度章节上下文、Child 叶子切片映射、层级标题、物理行号、表格/代码块标志及生效状态
 CREATE TABLE IF NOT EXISTS `knowledge_chunks` (
   `id`            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键ID',
   `tenant_id`     VARCHAR(64)   NOT NULL DEFAULT 'default_tenant' COMMENT '租户ID',
   `doc_id`        VARCHAR(64)   NOT NULL COMMENT '所属文档UUID',
   `chunk_id`      VARCHAR(64)   NOT NULL COMMENT '切片UUID (对应向量库 Vector ID)',
   `parent_id`     VARCHAR(64)   NOT NULL DEFAULT '' COMMENT '父块UUID (为空表示自身为粗粒度父块)',
+  `h1`            VARCHAR(255)  NOT NULL DEFAULT '' COMMENT '一级标题',
+  `h2`            VARCHAR(255)  NOT NULL DEFAULT '' COMMENT '二级标题',
+  `h3`            VARCHAR(255)  NOT NULL DEFAULT '' COMMENT '三级标题',
+  `start_line`    INT           NOT NULL DEFAULT 0 COMMENT '起始行号',
+  `end_line`      INT           NOT NULL DEFAULT 0 COMMENT '结束行号',
+  `has_table`     TINYINT(1)    NOT NULL DEFAULT 0 COMMENT '是否包含表格 (0:否, 1:是)',
+  `has_code`      TINYINT(1)    NOT NULL DEFAULT 0 COMMENT '是否包含代码块 (0:否, 1:是)',
   `chunk_index`   INT           NOT NULL DEFAULT 0 COMMENT '切片全局顺序序号',
   `chunk_hash`    VARCHAR(64)   DEFAULT '' COMMENT '切片内容 SHA256 哈希 (用于增量 Diff 对比)',
-  `chunk_type`    VARCHAR(32)   NOT NULL DEFAULT 'text' COMMENT '切片类型 (text:文本, table:表格, code:代码)',
+  `chunk_type`    VARCHAR(32)   NOT NULL DEFAULT 'text' COMMENT '切片类型 (parent:父块, text:文本, table:表格, code:代码)',
   `content`       MEDIUMTEXT    NOT NULL COMMENT '文本切片内容',
   `token_count`   INT           NOT NULL DEFAULT 0 COMMENT 'Token / 字符消耗数量',
   `vector_status` TINYINT       NOT NULL DEFAULT 0 COMMENT '向量同步状态 (0:未同步, 1:已同步)',

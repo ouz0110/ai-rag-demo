@@ -60,7 +60,7 @@ func (b *BaseAgent) ProcessToolCalls(
 			continue
 		}
 
-		requiresApproval := b.toolRegistry.RequiresApproval(toolName, tc.Function.Arguments)
+		requiresApproval := b.toolRegistry.RequiresApproval(ctx, toolName, tc.Function.Arguments)
 		isApproved := approvedTools[toolID] || approvedTools[toolName]
 
 		// 🛡️ 动态安全防护: terminal 工具如果是危险/修改性指令 (RequiresApproval 为 true),

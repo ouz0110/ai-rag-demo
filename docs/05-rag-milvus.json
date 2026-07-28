@@ -1,0 +1,112 @@
+[
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第一章：数据接入与预处理 Pipeline（源头治理） > 1.3 切分策略的工程选择 (Chunking Strategy)]\n*   **PDF 解析（核心难点）**：\n    *   *纯文本 PDF*：使用 `PyMuPDF`、`pdfplumber` 直接提取文本。\n    *   *扫描件/图片 PDF*：必须接入 **OCR**（如 `PaddleOCR`、`Tesseract`）。生产环境建议单独起一个 OCR 微服务，因为 OCR 耗时极长，不能阻塞主入库流程。\n    *   *带布局的 PDF*：必须使用布局分析工具（如 `Unstructured`），保留标题、表格、列表的层级关系，不要简单地把所有字连成一大串。\n*   **Office 文档 (Word/Excel)**：使用 `python-docx`、`openpyxl`。Excel 解析最坑，建议将二维表按行转成 `“Key: Value”` 的自然语言描述（如：`“产品A，单价：100元”`），否则 Embedding 模型看不懂二维表格。\n*   **网页/HTML**：必须过滤 `<script>`、`<style>`、`<nav>` 菜单等无关噪声，使用 `Readability` 或 `BeautifulSoup` 提取纯正文。",
+        "id": "018f2c8f-53ae-468a-a2c5-990dbe0f8953",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第六章：生产落地 Checklist（技术复盘自查表）]\n***",
+        "id": "05ba74ee-c312-4276-b5d8-d9f2a76dad50",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第一章：数据接入与预处理 Pipeline（源头治理） > 1.3 切分策略的工程选择 (Chunking Strategy)]\n## 第一章：数据接入与预处理 Pipeline（源头治理）\n\n在“喂”给模型之前，数据的干净程度决定了 RAG 的天花板。\n\n### 1.1 异构数据源的统一解析 (ETL 层)\n\n不要指望大模型能看懂乱七八糟的二进制文件。需要在文件入库前构建一个 **Parser Layer（解析器层）**。",
+        "id": "0f6bfa82-55a1-4203-9c14-7c353edb340f",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第二章：生产级索引构建（离线/实时两种模式） > 2.2 索引数据结构 (Storage Layout)]\n***",
+        "id": "0fa7f69b-5ce2-41b8-9c3c-bce9839cd5c7",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第六章：生产落地 Checklist（技术复盘自查表）]\n*   [ ] **14. 大模型 Prompt 是否输入了足够的上下文证据**：最终喂给大模型的，绝对不仅仅是孤零零的一句，而是包含元数据前缀的完整段落。\n*   [ ] **15. 是否配置了模型 Token 的实时计费与熔断**：防止一夜之间跑掉几千块钱的测试费。",
+        "id": "10271a36-76fd-4b3a-bffc-566d18057943",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第三章：在线检索的黄金路径（Query Pipeline） > 3.4 第四步：Prompt 组装与上下文注入]\n### 3.2 第二步：多路混合检索 (Hybrid Search)【核心难点】\n\n单一的密集向量检索（Dense Embedding）对“专有名词（如BM25）”召回效果差。生产环境必须做**加权混合**。\n\n*   **稀疏检索 (Sparse)**：使用 `BM25` 算法建立倒排索引。若用户问“退货运费”，BM25 能瞬间锁定含这两个词的段落。\n*   **密集检索 (Dense)**：使用 Embedding 比对，寻找语义相似的段落。\n*   **结果融合**：设定权重阈值（如 Dense 0.7 分，Sparse 0.3 分），对两个结果集交叉去重后，取 Top 100 作为初步候选。\n\n### 3.3 第三步：精排 (Rerank) 【不能省略】\n\nTop 100 的候选块依然存在大量噪声（如只是提到了相同词汇，但逻辑无关）。",
+        "id": "2948e6e5-a136-4dc1-b3fa-7fd968666bfa",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第三章：在线检索的黄金路径（Query Pipeline） > 3.4 第四步：Prompt 组装与上下文注入]\n## 第三章：在线检索的黄金路径（Query Pipeline）\n\n当用户提出问题时，RAG 系统不是“直接搜”，而是经过 4 道严苛的关卡。\n\n### 3.1 第一步：检索前预过滤 (Pre-Filtering)\n\n这是降低召回噪声和防泄露的最高效手段。\n\n*   **操作**：提取用户问句中的业务属性。如果用户问“2025年的政策”，在向量数据库的 Query 中，**绝对要强制加上 `WHERE year = 2025`** 的过滤条件。\n*   **权限围栏**：通过 API 网关拿到 User-Role，注入过滤条件 `WHERE permission IN (\"public\", role_read)`。**这一步不要指望大模型去做，代码层必须死死的锁住。** 系统宁可返回空，也不能泄露权限外内容。",
+        "id": "330ade95-873a-439a-8bce-20276fdc7de6",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第五章：大模型生成优化与幻觉消除 (The Final Mile) > 5.2 闭环评价指标（如何衡量模型变好了？）]\n*   **前端渲染**：前端的 `20%` 可以变成高亮，点击直接跳转打开 PDF 的指定页码。这是“可信赖 AI”的关键。\n\n### 5.2 闭环评价指标（如何衡量模型变好了？）\n\n在生产环境，不能“凭感觉”。一定要引入测评机制：",
+        "id": "343fde49-588e-41be-9dc7-20f3e4d5fcd7",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第三章：在线检索的黄金路径（Query Pipeline） > 3.4 第四步：Prompt 组装与上下文注入]\n```text\n【系统指令】\n你是一个严谨的业务助手。\n<限制>：仅能基于下方【参考信息】进行回答，回答风格必须简洁、专业。如果参考信息中没有答案，请直接回答“未在知识库中找到相关信息”，不得自行编造。\n<参考信息>：\n(将重排后的 Top 5 Chunk 拼接于此，注意用 \\n---\\n 分开，防止模型混淆不同来源)。\n<用户问题>：\n用户输入的原始 Query。\n```",
+        "id": "3ed1d99d-222d-44d6-b571-ce4078b6b63c",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第四章：高并发与容灾（SRE 工程视角） > 4.3 熔断与限流]\n### 4.3 熔断与限流\n\n*   由于大模型和 Embedding 服务通常由外部供应商提供（如 OpenAI/DeepSeek），一旦耗尽 Token 配额，系统会直接崩溃。\n*   **必须引入微服务网关层**：对 Embedding 和 LLM 两个出口做独立的 **Token 计数器**。如果某 5 分钟内消耗达到限额的 80%，触发限流，向返回 429 Too Many Requests 并进入排队队列。\n\n***",
+        "id": "5ca83614-d4b1-4deb-81ba-ca86bd50723c",
+        "is_active": 1
+    },
+    {
+        "chunk_type": "text",
+        "doc_id": "doc_6b6a45e1-8b23-441e-867a-2d1f0fbe0954",
+        "tenant_id": "default_tenant",
+        "kb_id": "kb_default_system",
+        "doc_version": "v1.0",
+        "content": "[来源文档：05-rag-prod-know.md]\n[来源：05-rag-prod-know > 📋 RAG 生产级落地工程实践指南 (Production-Grade RAG Implementation) > 第五章：大模型生成优化与幻觉消除 (The Final Mile) > 5.2 闭环评价指标（如何衡量模型变好了？）]\n## 第五章：大模型生成优化与幻觉消除 (The Final Mile)\n\n### 5.1 上下文里的引用，不能只是文本\n\n*   给大模型的 `参考信息` 里，必须包含 `chunk_id`。\n*   在大模型返回后，后端解析大模型的 Answer，检测其中包含了哪些 `chunk_id`，然后组装成前端可用的格式：",
+        "id": "5dc79532-daa9-4402-aa53-fa4a75a9e355",
+        "is_active": 1
+    }
+]

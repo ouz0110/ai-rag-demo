@@ -109,8 +109,10 @@ func (b *KBBiz) DeleteKnowledgeBase(ctx context.Context, kbID string) error {
 // UploadAndIngestFile 接收文件流上传保存至配置目录，并触发生产级 RAG 增量解析切片与向量化
 func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, r io.Reader) (*rag.KnowledgeDocumentModel, error) {
 	tenantID := vector.DefaultTenantID
+	openid := ""
 	if ok, u := common.UserFromContext(ctx); ok && u.Openid != "" {
 		tenantID = u.Openid
+		openid = u.Openid
 	}
 
 	if kbID == "" {
@@ -122,15 +124,16 @@ func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, 
 		return nil, fmt.Errorf("knowledge base [%s] not found: %v", kbID, err)
 	}
 
-	// 读取配置中的上传目录地址
-	uploadDir := "./workspace/uploads"
+	// 读取配置中的基础上传目录地址
+	baseUploadDir := "./workspace/uploads"
 	if b.cfg != nil && b.cfg.Source.RAG != nil && b.cfg.Source.RAG.UploadDir != "" {
-		uploadDir = b.cfg.Source.RAG.UploadDir
+		baseUploadDir = b.cfg.Source.RAG.UploadDir
 	}
 
-	kbTargetDir := filepath.Join(uploadDir, kbID)
-	if err := os.MkdirAll(kbTargetDir, 0755); err != nil {
-		return nil, fmt.Errorf("create upload dir failed: %w", err)
+	// 规划并构建用户专属知识库工作目录: {baseUploadDir}/{openid}/{kb_id}/
+	kbTargetDir, err := common.GetStrictUserKBWorkspaceDir(baseUploadDir, openid, kbID)
+	if err != nil {
+		return nil, err
 	}
 
 	safeFileName := filepath.Base(filename)

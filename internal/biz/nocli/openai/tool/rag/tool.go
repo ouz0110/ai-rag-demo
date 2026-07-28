@@ -39,7 +39,7 @@ func NewTool(cfg *conf.Config, engine *vector.VectorEngine) *Tool {
 	}
 }
 
-func (t *Tool) RequiresApproval(argsJSON string) bool {
+func (t *Tool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 	return false
 }
 

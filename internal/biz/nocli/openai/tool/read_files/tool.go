@@ -25,10 +25,10 @@ type Args struct {
 }
 
 type Tool struct {
-	cfg             *conf.Config
-	maxReadFiles    int
-	maxTotalBytes   int
-	chunkLines      int
+	cfg           *conf.Config
+	maxReadFiles  int
+	maxTotalBytes int
+	chunkLines    int
 }
 
 func NewTool(cfg *conf.Config) *Tool {
@@ -50,14 +50,14 @@ func NewTool(cfg *conf.Config) *Tool {
 	}
 
 	return &Tool{
-		cfg:             cfg,
-		maxReadFiles:    maxReadFiles,
-		maxTotalBytes:   maxTotalBytes,
-		chunkLines:      chunkLines,
+		cfg:           cfg,
+		maxReadFiles:  maxReadFiles,
+		maxTotalBytes: maxTotalBytes,
+		chunkLines:    chunkLines,
 	}
 }
 
-func (t *Tool) RequiresApproval(argsJSON string) bool {
+func (t *Tool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 	return false
 }
 
@@ -97,7 +97,7 @@ func (t *Tool) Definition() openai.Tool {
 		Function: &openai.FunctionDefinition{
 			Name:        ToolName,
 			Description: "批量读取指定文件内容。支持行范围限制和总字节数限制。大文件会自动分段读取。结果供模型分析使用，不直接返回给用户。",
-			Parameters: parameters,
+			Parameters:  parameters,
 		},
 	}
 }

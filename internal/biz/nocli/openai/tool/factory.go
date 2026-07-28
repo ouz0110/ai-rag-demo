@@ -17,7 +17,7 @@ import (
 type Tool interface {
 	Definition() openai.Tool
 	Run(ctx context.Context, argsJSON string) (string, error)
-	RequiresApproval(argsJSON string) bool
+	RequiresApproval(ctx context.Context, argsJSON string) bool
 }
 
 type Registry struct {
@@ -91,10 +91,10 @@ func (r *Registry) Call(ctx context.Context, name, argsJSON string) (string, err
 	return t.Run(ctx, argsJSON)
 }
 
-func (r *Registry) RequiresApproval(name, argsJSON string) bool {
+func (r *Registry) RequiresApproval(ctx context.Context, name, argsJSON string) bool {
 	t, ok := r.tools[name]
 	if !ok {
 		return false
 	}
-	return t.RequiresApproval(argsJSON)
+	return t.RequiresApproval(ctx, argsJSON)
 }

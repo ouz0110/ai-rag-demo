@@ -42,20 +42,22 @@ func NewSessionManager(
 
 // InitOrCreateSession 初始化或加载会话，负责新建会话与 SystemPrompt 的安全落盘
 func (m *SessionManager) InitOrCreateSession(ctx context.Context, sessionID, userMsg string) (string, error) {
-	workDir := ""
-	if m.cfg != nil && m.cfg.Source.Nocli != nil {
-		workDir = m.cfg.Source.Nocli.WorkDir
+	baseAgentDir := "./workspace/agent"
+	if m.cfg != nil && m.cfg.Source.Nocli != nil && m.cfg.Source.Nocli.WorkDir != "" {
+		baseAgentDir = m.cfg.Source.Nocli.WorkDir
 	}
-	if workDir == "" {
-		workDir = "."
+
+	_, user := common.UserFromContext(ctx)
+	agentWorkDir, err := common.GetStrictUserAgentWorkDir(ctx, baseAgentDir)
+	if err != nil {
+		return "", fmt.Errorf("初始化用户 Agent 工作空间失败: %w", err)
 	}
 
 	ag, ok := m.agentRegistry.Get("main")
 	if !ok {
 		return "", fmt.Errorf("未找到默认 main agent")
 	}
-	systemPrompt := ag.SystemPrompt(workDir, m.skillManager)
-	_, user := common.UserFromContext(ctx)
+	systemPrompt := ag.SystemPrompt(agentWorkDir, m.skillManager)
 	now := time.Now().Unix()
 
 	if sessionID == "" {

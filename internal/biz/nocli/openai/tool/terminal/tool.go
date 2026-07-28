@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -31,15 +32,20 @@ func NewTool(cfg *conf.Config) *Tool {
 	return &Tool{cfg: cfg}
 }
 
-func (t *Tool) RequiresApproval(argsJSON string) bool {
+func (t *Tool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 	var args Args
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return true
 	}
 
-	workDir := t.cfg.Source.Nocli.WorkDir
-	if workDir == "" {
-		workDir = "."
+	baseWorkDir := "./workspace/agent"
+	if t.cfg != nil && t.cfg.Source.Nocli != nil && t.cfg.Source.Nocli.WorkDir != "" {
+		baseWorkDir = t.cfg.Source.Nocli.WorkDir
+	}
+
+	workDir, err := common.GetStrictUserAgentWorkDir(ctx, baseWorkDir)
+	if err != nil {
+		return true
 	}
 
 	// 1. 任何企图逃逸工作目录的 cwd 或 command 均属于风险/越界操作，强制触发人工审批
@@ -87,14 +93,14 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 		return "", fmt.Errorf("执行命令不能为空")
 	}
 
-	workDir := t.cfg.Source.Nocli.WorkDir
-	if workDir == "" {
-		workDir = "."
+	baseWorkDir := "./workspace/agent"
+	if t.cfg != nil && t.cfg.Source.Nocli != nil && t.cfg.Source.Nocli.WorkDir != "" {
+		baseWorkDir = t.cfg.Source.Nocli.WorkDir
 	}
 
-	cleanWorkDir, err := filepath.Abs(workDir)
+	cleanWorkDir, err := common.GetStrictUserAgentWorkDir(ctx, baseWorkDir)
 	if err != nil {
-		return "", fmt.Errorf("工作目录解析失败: %v", err)
+		return "", fmt.Errorf("解析用户 Agent 工作目录失败: %w", err)
 	}
 
 	// 1. 校验 cwd 路径边界

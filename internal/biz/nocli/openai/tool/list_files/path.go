@@ -1,7 +1,9 @@
 package list_file
 
 import (
+	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -50,14 +52,18 @@ type ResolveResult struct {
 }
 
 func ResolvePath(cfg *conf.Config, userPath string) (*ResolveResult, error) {
-	workDir := cfg.Source.Nocli.WorkDir
-	if workDir == "" {
-		return nil, fmt.Errorf("nocli.work_dir 未配置")
+	return ResolvePathWithCtx(context.Background(), cfg, userPath)
+}
+
+func ResolvePathWithCtx(ctx context.Context, cfg *conf.Config, userPath string) (*ResolveResult, error) {
+	baseWorkDir := "./workspace/agent"
+	if cfg != nil && cfg.Source.Nocli != nil && cfg.Source.Nocli.WorkDir != "" {
+		baseWorkDir = cfg.Source.Nocli.WorkDir
 	}
 
-	cleanWorkDir, err := filepath.Abs(workDir)
+	cleanWorkDir, err := common.GetStrictUserAgentWorkDir(ctx, baseWorkDir)
 	if err != nil {
-		return nil, fmt.Errorf("工作目录解析失败: %v", err)
+		return nil, fmt.Errorf("解析用户 Agent 工作目录失败: %w", err)
 	}
 
 	target := filepath.Join(cleanWorkDir, userPath)

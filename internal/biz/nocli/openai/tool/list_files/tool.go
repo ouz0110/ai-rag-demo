@@ -28,7 +28,7 @@ func NewTool(cfg *conf.Config) *Tool {
 	return &Tool{cfg: cfg}
 }
 
-func (t *Tool) RequiresApproval(argsJSON string) bool {
+func (t *Tool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 	return false
 }
 
@@ -70,7 +70,7 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	}
 	recursive := args.Recursive
 
-	res, err := ResolvePath(t.cfg, path)
+	res, err := ResolvePathWithCtx(ctx, t.cfg, path)
 	if err != nil {
 		return "", err
 	}

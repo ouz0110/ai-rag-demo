@@ -38,7 +38,7 @@ func NewAgentTool(targetAgent base.IAgent, chatModel *chatmodel.ChatModel, opts 
 	}
 }
 
-func (t *AgentTool) RequiresApproval(argsJSON string) bool {
+func (t *AgentTool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 	return false // 委派给子 Agent 默认自动放行
 }
 
