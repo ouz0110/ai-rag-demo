@@ -190,6 +190,8 @@ message CompletionRequest {
   string kb_id = 5;
   // 是否启用 RAG 知识库检索 (默认 false。仅在显式开启时才允许触发 RAG 检索)
   bool enable_rag = 6;
+  // 是否启用 Skill 扩展技能 (默认 false / true 可选)
+  bool enable_skill = 7;
 }
 
 // 恢复执行请求
@@ -212,6 +214,8 @@ message ResumeRequest {
   string kb_id = 8;
   // 是否启用 RAG 知识库检索 (默认 false)
   bool enable_rag = 9;
+  // 是否启用 Skill 扩展技能 (默认 false)
+  bool enable_skill = 10;
 }
 
 // 会话概览信息

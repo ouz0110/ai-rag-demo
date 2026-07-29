@@ -14,6 +14,7 @@ const (
 	ParentKBTenantIDKey    = "parent_kb_tenant_id"
 	ParentKBIDKey          = "parent_kb_id"
 	ParentEnableRAGKey     = "parent_enable_rag"
+	ParentEnableSkillKey   = "parent_enable_skill"
 	ParentKBNameKey        = "parent_kb_name"
 	ParentKBDescriptionKey = "parent_kb_description"
 )
@@ -25,6 +26,7 @@ type ParentContext struct {
 	KBName        string
 	KBDescription string
 	EnableRAG     bool
+	EnableSkill   bool
 	Messages      []openai.ChatCompletionMessage
 	Appender      func([]openai.ChatCompletionMessage)
 	Emitter       StreamEmitter
@@ -35,6 +37,7 @@ func (pc *ParentContext) Inject(ctx context.Context) context.Context {
 	ctx = context.WithValue(ctx, ParentMessagesKey, pc.Messages)
 	ctx = context.WithValue(ctx, ParentAppenderKey, pc.Appender)
 	ctx = context.WithValue(ctx, ParentEnableRAGKey, pc.EnableRAG)
+	ctx = context.WithValue(ctx, ParentEnableSkillKey, pc.EnableSkill)
 	if pc.KBTenantID != "" {
 		ctx = context.WithValue(ctx, ParentKBTenantIDKey, pc.KBTenantID)
 	}

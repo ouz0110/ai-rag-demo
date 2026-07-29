@@ -67,6 +67,7 @@ export const useKBStore = defineStore('kb', () => {
   const activeKbId = ref<string>('kb_default_system');
   const activeKbTenantId = ref<string>('default_tenant');
   const enableRAG = ref<boolean>(false); // 默认关闭 RAG 开关！只有用户明确开启才允许触发 RAG 检索
+  const enableSkill = ref<boolean>(true); // 默认开启 Skill 开关！
   const loading = ref<boolean>(false);
   const docLoading = ref<boolean>(false);
   const uploading = ref<boolean>(false);
@@ -74,6 +75,10 @@ export const useKBStore = defineStore('kb', () => {
 
   function toggleRAG() {
     enableRAG.value = !enableRAG.value;
+  }
+
+  function toggleSkill() {
+    enableSkill.value = !enableSkill.value;
   }
 
   // 获取默认知识库
@@ -233,6 +238,7 @@ export const useKBStore = defineStore('kb', () => {
     activeKbId,
     activeKbTenantId,
     enableRAG,
+    enableSkill,
     loading,
     docLoading,
     uploading,
@@ -248,5 +254,6 @@ export const useKBStore = defineStore('kb', () => {
     selectKB,
     uploadFile,
     toggleRAG,
+    toggleSkill,
   };
 });

@@ -16,6 +16,22 @@
       <span>RAG: {{ kbStore.enableRAG ? '已启用' : '已禁用' }}</span>
     </button>
 
+    <!-- 2. Skill 扩展技能显式开关按钮 -->
+    <button
+      @click="kbStore.toggleSkill"
+      type="button"
+      :class="[
+        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer shadow-sm select-none',
+        kbStore.enableSkill
+          ? 'bg-gradient-to-r from-purple-500/20 to-indigo-600/20 border-purple-500/50 text-purple-300 shadow-purple-500/10'
+          : 'bg-white/5 border-white/10 text-gray-400 hover:text-gray-200 hover:bg-white/10'
+      ]"
+      :title="kbStore.enableSkill ? 'Skill 技能扩展已开启 (点击禁用)' : 'Skill 技能扩展已禁用 (点击显式开启)'"
+    >
+      <Zap class="w-3.5 h-3.5" :class="kbStore.enableSkill ? 'text-purple-400 animate-pulse' : 'text-gray-500'" />
+      <span>Skill: {{ kbStore.enableSkill ? '已启用' : '已禁用' }}</span>
+    </button>
+
     <!-- 2. 关联知识库下拉选择器 (仅当用户开启 RAG 时展示/选择) -->
     <div v-if="kbStore.enableRAG" class="relative inline-block text-left" ref="dropdownRef">
       <button
@@ -107,6 +123,7 @@ import {
   Plus,
   ArrowRight,
   Sparkles,
+  Zap,
 } from 'lucide-vue-next';
 
 const kbStore = useKBStore();

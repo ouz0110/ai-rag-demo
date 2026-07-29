@@ -5,6 +5,7 @@ import (
 	"ai-rag-demo/internal/biz/nocli/openai/tool"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/log"
+	"ai-rag-demo/internal/pkg/skill"
 	"context"
 	"fmt"
 	"strings"
@@ -17,6 +18,7 @@ type BaseAgent struct {
 	name          string
 	cfg           *conf.Config
 	toolRegistry  *tool.Registry
+	skillMgr      *skill.Manager
 	maxIterations int
 	tools         []openai.Tool
 	model         string
@@ -31,6 +33,14 @@ func (b *BaseAgent) Name() string {
 
 func (b *BaseAgent) SetName(name string) {
 	b.name = name
+}
+
+func (b *BaseAgent) SetSkillManager(skillMgr *skill.Manager) {
+	b.skillMgr = skillMgr
+}
+
+func (b *BaseAgent) SkillManager() *skill.Manager {
+	return b.skillMgr
 }
 
 func NewBaseAgent(name string, cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
@@ -101,7 +111,7 @@ func (b *BaseAgent) BuildToolsPrompt() string {
 
 // BuildFullSystemPrompt 统一进行 Agent 系统提示词的基类模版组装
 // 自动将子类 Agent 自定义的核心人设 (corePrompt) 与基类感知的 Tool 清单及 Skill 目录模版进行有机拼接
-func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string) string {
+func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string, skillMgrs ...*skill.Manager) string {
 	var sb strings.Builder
 
 	sb.WriteString(strings.TrimSpace(corePrompt))
@@ -110,7 +120,107 @@ func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string) string {
 	if toolsPrompt != "" {
 		sb.WriteString("\n\n" + toolsPrompt)
 	}
+
+	var mgr *skill.Manager
+	if len(skillMgrs) > 0 && skillMgrs[0] != nil {
+		mgr = skillMgrs[0]
+	} else {
+		mgr = b.skillMgr
+	}
+
+	if mgr != nil {
+		skillPrompt := mgr.BuildLevel1PromptForAgent(b.Name())
+		if skillPrompt != "" {
+			sb.WriteString("\n" + skillPrompt)
+		}
+	}
+
 	return sb.String()
+}
+
+// BuildRAGPromptFromContext 从 Context 中动态解析 RAG 知识库配置并渲染 Prompt 增强块
+func BuildRAGPromptFromContext(ctx context.Context) string {
+	enableRAG, hasEnableRAG := ctx.Value(ParentEnableRAGKey).(bool)
+	if !hasEnableRAG {
+		return ""
+	}
+
+	kbName, _ := ctx.Value(ParentKBNameKey).(string)
+	kbDesc, _ := ctx.Value(ParentKBDescriptionKey).(string)
+
+	if enableRAG {
+		return fmt.Sprintf(`
+
+【当前实时 RAG 知识库配置与状态】
+- RAG 检索功能：【已显式开启】
+- 关联知识库名称：%s
+- 知识库范畴与描述：%s
+- 调度准则：用户当前已显式开启 RAG 检索功能。若用户的提问与该知识库范畴相关，或用户意图需要查阅业务文档与专有知识库，请务必调用 'delegate_to_rag_agent' 工具委派给 RAG 知识库 Agent 检索！`, kbName, kbDesc)
+	}
+
+	return `
+
+【当前实时 RAG 知识库配置与状态】
+- RAG 检索功能：【未开启】
+- 调度准则：用户未开启 RAG 检索功能，普通问题直接回答，无需调用 'delegate_to_rag_agent'。`
+}
+
+// EnhanceRuntimeMessages 统一在 Agent.Run 前动态增强消息历史 (自动动态刷最新 Skill 目录 + 自动注入 RAG 状态 Prompt)
+func (b *BaseAgent) EnhanceRuntimeMessages(ctx context.Context, messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	newMsgs := make([]openai.ChatCompletionMessage, len(messages))
+	copy(newMsgs, messages)
+
+	enableSkill, hasEnableSkill := ctx.Value(ParentEnableSkillKey).(bool)
+	// 若 ctx 显式传递了 ParentEnableSkillKey 则以 ctx 为准；未传递时默认视为开启 (true)
+	shouldEnableSkill := true
+	if hasEnableSkill {
+		shouldEnableSkill = enableSkill
+	}
+
+	// 1. 动态刷新并重新注入最新的 Level 1 Skill Prompt
+	if shouldEnableSkill && b.skillMgr != nil {
+		latestSkillPrompt := b.skillMgr.BuildLevel1PromptForAgent(b.Name())
+		if latestSkillPrompt != "" {
+			if newMsgs[0].Role == openai.ChatMessageRoleSystem {
+				if idx := strings.Index(newMsgs[0].Content, "## 🛠️ 扩展技能系统"); idx != -1 {
+					baseContent := strings.TrimSpace(newMsgs[0].Content[:idx])
+					newMsgs[0].Content = baseContent + "\n" + latestSkillPrompt
+				} else {
+					newMsgs[0].Content = strings.TrimSpace(newMsgs[0].Content) + "\n" + latestSkillPrompt
+				}
+			}
+		}
+	} else if !shouldEnableSkill {
+		// 当显式关闭 Skill 时，剔除 System Message 中残留的扩展技能系统说明
+		if newMsgs[0].Role == openai.ChatMessageRoleSystem {
+			if idx := strings.Index(newMsgs[0].Content, "## 🛠️ 扩展技能系统"); idx != -1 {
+				newMsgs[0].Content = strings.TrimSpace(newMsgs[0].Content[:idx])
+			}
+		}
+	}
+
+	// 2. 动态注入上下文中的 RAG 状态 Prompt
+	ragPrompt := BuildRAGPromptFromContext(ctx)
+	if ragPrompt != "" {
+		if newMsgs[0].Role == openai.ChatMessageRoleSystem {
+			if !strings.Contains(newMsgs[0].Content, "【当前实时 RAG 知识库配置与状态】") {
+				newMsgs[0].Content += ragPrompt
+			}
+		} else {
+			newMsgs = append([]openai.ChatCompletionMessage{
+				{
+					Role:    openai.ChatMessageRoleSystem,
+					Content: ragPrompt,
+				},
+			}, newMsgs...)
+		}
+	}
+
+	return newMsgs
 }
 
 func (b *BaseAgent) Model() string {

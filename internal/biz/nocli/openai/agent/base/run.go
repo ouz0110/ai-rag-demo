@@ -17,7 +17,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 	}
 
 	sessionID := opts.SessionID
-	messages := opts.Messages
+	messages := b.EnhanceRuntimeMessages(ctx, opts.Messages)
 	model := b.Model()
 	tools := b.Tools()
 	approvedTools := opts.ApprovedTools

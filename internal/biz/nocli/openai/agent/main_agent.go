@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"context"
 	"fmt"
-	"strings"
 
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
@@ -14,8 +12,6 @@ import (
 	terminal "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/skill"
-
-	openai "github.com/sashabaranov/go-openai"
 )
 
 const MainAgentName = "main"
@@ -34,6 +30,7 @@ func NewMainAgent(cfg *conf.Config, baseTools *tool.Registry, skillMgr *skill.Ma
 		loadskill.ToolName,
 	)
 	b := base.NewBaseAgent(MainAgentName, cfg, tools)
+	b.SetSkillManager(skillMgr)
 	return &MainAgent{
 		BaseAgent: b,
 		skillMgr:  skillMgr,
@@ -72,68 +69,4 @@ func (a *MainAgent) SystemPrompt(workDir string) string {
    - 若用户的需求超出了你及所有可用工具和专有 Agent 的能力边界（例如请求物理操控外部硬件设备、尝试未授权的高危行为等），请极其礼貌、清晰且友好地告知用户：“抱歉，目前系统尚未接入该功能。我目前为您提供通用问答、文件与代码库分析、知识库检索以及本地文件探索等能力。”`, workDir)
 
 	return a.BuildFullSystemPrompt(corePrompt)
-}
-
-// Run 扩展 MainAgent 的 Run 方法，动态将 context 中的 RAG 状态、最新 Skill 状态配置暴露给 LLM
-func (a *MainAgent) Run(ctx context.Context, opts *base.RunOptions) (*base.LoopResult, error) {
-	if opts != nil && len(opts.Messages) > 0 {
-		newMsgs := make([]openai.ChatCompletionMessage, len(opts.Messages))
-		copy(newMsgs, opts.Messages)
-
-		// 📌 1. 动态刷新并重新注入最新的 Level 1 Skill Prompt（解决系统 Skill 修改后历史会话包含旧 Prompt 的问题）
-		if a.skillMgr != nil {
-			latestSkillPrompt := a.skillMgr.BuildLevel1PromptForAgent(a.Name())
-			if latestSkillPrompt != "" {
-				if newMsgs[0].Role == openai.ChatMessageRoleSystem {
-					if idx := strings.Index(newMsgs[0].Content, "## 🛠️ 扩展技能系统"); idx != -1 {
-						baseContent := strings.TrimSpace(newMsgs[0].Content[:idx])
-						newMsgs[0].Content = baseContent + "\n" + latestSkillPrompt
-					} else {
-						newMsgs[0].Content = strings.TrimSpace(newMsgs[0].Content) + "\n" + latestSkillPrompt
-					}
-				}
-			}
-		}
-
-		// 📌 2. 动态注入 RAG 配置与上下文状态
-		enableRAG, hasEnableRAG := ctx.Value(base.ParentEnableRAGKey).(bool)
-		kbName, _ := ctx.Value(base.ParentKBNameKey).(string)
-		kbDesc, _ := ctx.Value(base.ParentKBDescriptionKey).(string)
-
-		var ragPrompt string
-		if hasEnableRAG && enableRAG {
-			ragPrompt = fmt.Sprintf(`
-
-【当前实时 RAG 知识库配置与状态】
-- RAG 检索功能：【已显式开启】
-- 关联知识库名称：%s
-- 知识库范畴与描述：%s
-- 调度准则：用户当前已显式开启 RAG 检索功能。若用户的提问与该知识库范畴相关，或用户意图需要查阅业务文档与专有知识库，请务必调用 'delegate_to_rag_agent' 工具委派给 RAG 知识库 Agent 检索！`, kbName, kbDesc)
-		} else if hasEnableRAG && !enableRAG {
-			ragPrompt = `
-
-【当前实时 RAG 知识库配置与状态】
-- RAG 检索功能：【未开启】
-- 调度准则：用户未开启 RAG 检索功能，普通问题直接回答，无需调用 'delegate_to_rag_agent'。`
-		}
-
-		if ragPrompt != "" {
-			if newMsgs[0].Role == openai.ChatMessageRoleSystem {
-				newMsgs[0].Content += ragPrompt
-			} else {
-				newMsgs = append([]openai.ChatCompletionMessage{
-					{
-						Role:    openai.ChatMessageRoleSystem,
-						Content: ragPrompt,
-					},
-				}, newMsgs...)
-			}
-		}
-
-		optsCopy := *opts
-		optsCopy.Messages = newMsgs
-		return a.BaseAgent.Run(ctx, &optsCopy)
-	}
-
-	return a.BaseAgent.Run(ctx, opts)
 }

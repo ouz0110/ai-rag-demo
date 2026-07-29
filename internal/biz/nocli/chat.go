@@ -94,7 +94,7 @@ func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string,
 	return "", ""
 }
 
-func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
 	if kbTenantID == "" {
 		kbTenantID = vector.DefaultTenantID
 	}
@@ -114,6 +114,7 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 		KBName:        kbName,
 		KBDescription: kbDesc,
 		EnableRAG:     enableRAG,
+		EnableSkill:   enableSkill,
 		Messages:      *messages,
 		Appender: func(msgs []openai.ChatCompletionMessage) {
 			*messages = append(*messages, msgs...)
@@ -148,7 +149,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, &messages, nil)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, req.EnableSkill, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -231,7 +232,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, &messages, nil)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, req.EnableSkill, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,
