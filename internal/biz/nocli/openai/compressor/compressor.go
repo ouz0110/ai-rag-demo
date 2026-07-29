@@ -116,7 +116,28 @@ func (c *ContextCompressor) Compress(
 		return &CompressResult{CompressedMessages: msgs, IsCompressed: false}, nil
 	}
 
+	// 🎯 动态 Token 预算留存算法 (Token-Budget Dynamic Retention):
+	// 对于 128k 等大上下文，按比例逆向保留近期 ~30% 的 Token 预算 (或至少 4k~38k Tokens)，
+	// 避免在 128k 窗口下将上下文“机械断崖式”压缩到仅剩几条消息。
+	targetKeepTokens := int(float64(c.cfg.MaxContextTokens) * 0.30)
+	if targetKeepTokens < 4000 {
+		targetKeepTokens = 4000
+	}
+
+	accTokens := 0
 	rawCandidateIdx := len(dialogueMsgs) - keepCount
+	for i := len(dialogueMsgs) - 1; i >= 0; i-- {
+		msgTokens := c.EstimateTokens([]openai.ChatCompletionMessage{dialogueMsgs[i]})
+		accTokens += msgTokens
+		if accTokens >= targetKeepTokens && (len(dialogueMsgs)-i) >= keepCount {
+			rawCandidateIdx = i
+			break
+		}
+	}
+	if rawCandidateIdx < 0 {
+		rawCandidateIdx = 0
+	}
+
 	splitIdx := c.findSafeToolBoundary(dialogueMsgs, rawCandidateIdx)
 	if splitIdx <= 0 {
 		return &CompressResult{CompressedMessages: msgs, IsCompressed: false}, nil
@@ -171,7 +192,7 @@ func (c *ContextCompressor) Compress(
 	var summaryText string
 	var err error
 	if summarizerFunc != nil {
-		summaryText, err = summarizerFunc(summaryCtx, toCompress)
+		summaryText, err = summarizerFunc(summaryCtx, c.distillToolOutputs(toCompress))
 	} else {
 		err = fmt.Errorf("summarizerFunc is nil")
 	}
@@ -265,4 +286,17 @@ func (c *ContextCompressor) findSafeToolBoundary(msgs []openai.ChatCompletionMes
 		}
 	}
 	return idx
+}
+
+// distillToolOutputs 预处理待压缩列表中的巨大 Tool 输出，避免庞大的工具数据冲爆摘要模型的输入窗口
+func (c *ContextCompressor) distillToolOutputs(msgs []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
+	distilled := make([]openai.ChatCompletionMessage, 0, len(msgs))
+	for _, m := range msgs {
+		if m.Role == openai.ChatMessageRoleTool && len(m.Content) > 1200 {
+			runes := []rune(m.Content)
+			m.Content = fmt.Sprintf("%s\n...[已蒸馏长工具输出: 原始长度 %d 字符]...", string(runes[:600]), len(runes))
+		}
+		distilled = append(distilled, m)
+	}
+	return distilled
 }
