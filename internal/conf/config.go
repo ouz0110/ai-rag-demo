@@ -106,7 +106,8 @@ type NocliConfig struct {
 }
 
 type SkillConfig struct {
-	Path string `json:"path"`
+	Enable bool   `json:"enable" yaml:"enable"`
+	Path   string `json:"path" yaml:"path"`
 }
 
 type MilvusConfig struct {
@@ -159,15 +160,16 @@ type BillingConfig struct {
 }
 
 type RAGConfig struct {
-	KnowledgeDir   string           `json:"knowledge_dir"`   // 默认公共知识库文件目录
-	UploadDir      string           `json:"upload_dir"`      // 用户自主上传文件的存储目录
-	AutoReload     bool             `json:"auto_reload"`     // 启动时是否自动增量重载知识库
-	TopK           int              `json:"top_k"`           // 默认召回 TopK
-	ScoreThreshold float32          `json:"score_threshold"` // 默认相似度得分阈值
-	Embedding      *EmbeddingConfig `json:"embedding"`       // 独立 Embedding AI 配置
-	Chunker        *ChunkerConfig   `json:"chunker"`         // 细粒度切片配置
-	Rerank         *RerankConfig    `json:"rerank"`          // 独立 Rerank 重排配置
-	Billing        *BillingConfig   `json:"billing"`         // 计费配置
+	Enable         bool             `json:"enable" yaml:"enable"`           // 是否开启 RAG 检索全局总开关
+	KnowledgeDir   string           `json:"knowledge_dir" yaml:"knowledge_dir"`   // 默认公共知识库文件目录
+	UploadDir      string           `json:"upload_dir" yaml:"upload_dir"`      // 用户自主上传文件的存储目录
+	AutoReload     bool             `json:"auto_reload" yaml:"auto_reload"`     // 启动时是否自动增量重载知识库
+	TopK           int              `json:"top_k" yaml:"top_k"`           // 默认召回 TopK
+	ScoreThreshold float32          `json:"score_threshold" yaml:"score_threshold"` // 默认相似度得分阈值
+	Embedding      *EmbeddingConfig `json:"embedding" yaml:"embedding"`       // 独立 Embedding AI 配置
+	Chunker        *ChunkerConfig   `json:"chunker" yaml:"chunker"`         // 细粒度切片配置
+	Rerank         *RerankConfig    `json:"rerank" yaml:"rerank"`          // 独立 Rerank 重排配置
+	Billing        *BillingConfig   `json:"billing" yaml:"billing"`         // 计费配置
 }
 
 type Config struct {

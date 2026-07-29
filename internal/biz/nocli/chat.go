@@ -41,13 +41,17 @@ func NewChatBiz(
 	allDb *data.DB,
 	vectorEngine *vector.VectorEngine,
 ) *ChatBiz {
+	var enableSkill bool
 	var skillsDir string
 	if cfg != nil && cfg.Source.Skill != nil {
+		enableSkill = cfg.Source.Skill.Enable
 		skillsDir = cfg.Source.Skill.Path
 	}
 	skillReg := skill.NewRegistry(skillsDir)
-	if err := skillReg.Scan(); err != nil {
-		log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
+	if enableSkill {
+		if err := skillReg.Scan(); err != nil {
+			log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
+		}
 	}
 
 	skillMgr := skill.NewManager(skillReg)
@@ -75,6 +79,20 @@ func NewChatBiz(
 		allDb:             allDb,
 		contextCompressor: contextCompressor,
 	}
+}
+
+func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill bool) (bool, bool) {
+	finalRAG := false
+	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Enable {
+		finalRAG = reqRAG
+	}
+
+	finalSkill := false
+	if cfg != nil && cfg.Source.Skill != nil && cfg.Source.Skill.Enable {
+		finalSkill = reqSkill
+	}
+
+	return finalRAG, finalSkill
 }
 
 func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string, string) {
@@ -149,7 +167,8 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, req.EnableSkill, &messages, nil)
+	finalRAG, finalSkill := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -232,7 +251,8 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, req.EnableSkill, &messages, nil)
+	finalRAG, finalSkill := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

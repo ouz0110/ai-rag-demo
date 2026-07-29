@@ -43,7 +43,8 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, req.EnableSkill, &messages, emitter)
+	finalRAG, finalSkill := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, &messages, emitter)
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
 	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -117,7 +118,8 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, req.EnableSkill, &messages, emitter)
+	finalRAG, finalSkill := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, &messages, emitter)
 	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
 	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{

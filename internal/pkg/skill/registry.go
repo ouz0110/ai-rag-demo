@@ -14,6 +14,11 @@ type Registry struct {
 }
 
 func NewRegistry(skillsDir string) *Registry {
+	if skillsDir != "" {
+		if absDir, err := filepath.Abs(skillsDir); err == nil {
+			skillsDir = absDir
+		}
+	}
 	return &Registry{
 		skillsDir: skillsDir,
 		skills:    make(map[string]*Skill),
@@ -25,42 +30,7 @@ func (r *Registry) Scan() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.skillsDir == "" {
-		return nil
-	}
-
-	entries, err := os.ReadDir(r.skillsDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("读取技能目录失败 [%s]: %v", r.skillsDir, err)
-	}
-
-	newSkills := make(map[string]*Skill)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-
-		skillFile := filepath.Join(r.skillsDir, entry.Name(), "SKILL.md")
-		if _, err := os.Stat(skillFile); os.IsNotExist(err) {
-			continue
-		}
-
-		s, err := ParseFile(skillFile)
-		if err != nil {
-			// 单个 Skill 解析失败不中断整体扫描，打印日志跳过
-			fmt.Printf("[SkillRegistry] 忽略非法 Skill [%s]: %v\n", skillFile, err)
-			continue
-		}
-
-		newSkills[s.Frontmatter.Name] = s
-		fmt.Println("load skill: ", s.Frontmatter.Name)
-	}
-
-	r.skills = newSkills
-	return nil
+	return r.scanUnlocked()
 }
 
 func (r *Registry) GetSkill(name string) (*Skill, bool) {
@@ -98,6 +68,10 @@ func (r *Registry) GetLatestSkill(name string) (*Skill, bool) {
 func (r *Registry) scanUnlocked() error {
 	if r.skillsDir == "" {
 		return nil
+	}
+
+	if absDir, err := filepath.Abs(r.skillsDir); err == nil {
+		r.skillsDir = absDir
 	}
 
 	entries, err := os.ReadDir(r.skillsDir)

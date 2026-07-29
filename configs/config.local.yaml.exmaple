@@ -71,6 +71,7 @@ source:
       collection_name: "rag_knowledge"
       dimension: 1536
   rag:
+    enable: true                            # 是否开启 RAG 知识库检索全局总开关
     knowledge_dir: "./workspace/knowledge"
     upload_dir: "./workspace/uploads"
     auto_reload: true
@@ -109,6 +110,9 @@ source:
       overlap: 30
       merge_threshold: 0.75
       split_threshold: 0.45
+  skill:
+    enable: true                            # 是否开启 Skill 技能扩展系统全局总开关
+    path: "./skills"
   nocli:
     work_dir: "./workspace/agent"
     max_agent_iterations: 15

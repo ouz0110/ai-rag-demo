@@ -99,8 +99,7 @@ func (b *BaseAgent) BuildToolsPrompt() string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("\n## 🛠️ 当前已绑定的可调用工具列表 (Available Tools System)\n")
-	sb.WriteString("你具备调用以下工具的能力，请根据具体需求选择合适的工具：\n")
+	sb.WriteString(AvailableToolsPromptHeader)
 	for _, t := range tools {
 		if t.Function != nil {
 			sb.WriteString(fmt.Sprintf("- **'%s'**: %s\n", t.Function.Name, t.Function.Description))
@@ -110,7 +109,7 @@ func (b *BaseAgent) BuildToolsPrompt() string {
 }
 
 // BuildFullSystemPrompt 统一进行 Agent 系统提示词的基类模版组装
-// 自动将子类 Agent 自定义的核心人设 (corePrompt) 与基类感知的 Tool 清单及 Skill 目录模版进行有机拼接
+// 自动将子类 Agent 自定义的核心人设 (corePrompt) 与基类感知的 Tool 清单、通用安全禁令及 Skill 目录模版进行有机拼接
 func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string, skillMgrs ...*skill.Manager) string {
 	var sb strings.Builder
 
@@ -118,8 +117,12 @@ func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string, skillMgrs ...*skill
 
 	toolsPrompt := b.BuildToolsPrompt()
 	if toolsPrompt != "" {
-		sb.WriteString("\n\n" + toolsPrompt)
+		sb.WriteString("\n\n")
+		sb.WriteString(toolsPrompt)
 	}
+
+	// 📌 统一追加基类全局通用安全边界与行为禁令
+	sb.WriteString(SafetyConstraintsPrompt)
 
 	var mgr *skill.Manager
 	if len(skillMgrs) > 0 && skillMgrs[0] != nil {
@@ -131,7 +134,8 @@ func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string, skillMgrs ...*skill
 	if mgr != nil {
 		skillPrompt := mgr.BuildLevel1PromptForAgent(b.Name())
 		if skillPrompt != "" {
-			sb.WriteString("\n" + skillPrompt)
+			sb.WriteString("\n")
+			sb.WriteString(skillPrompt)
 		}
 	}
 
@@ -149,20 +153,10 @@ func BuildRAGPromptFromContext(ctx context.Context) string {
 	kbDesc, _ := ctx.Value(ParentKBDescriptionKey).(string)
 
 	if enableRAG {
-		return fmt.Sprintf(`
-
-【当前实时 RAG 知识库配置与状态】
-- RAG 检索功能：【已显式开启】
-- 关联知识库名称：%s
-- 知识库范畴与描述：%s
-- 调度准则：用户当前已显式开启 RAG 检索功能。若用户的提问与该知识库范畴相关，或用户意图需要查阅业务文档与专有知识库，请务必调用 'delegate_to_rag_agent' 工具委派给 RAG 知识库 Agent 检索！`, kbName, kbDesc)
+		return fmt.Sprintf(RAGEnabledPromptTemplate, kbName, kbDesc)
 	}
 
-	return `
-
-【当前实时 RAG 知识库配置与状态】
-- RAG 检索功能：【未开启】
-- 调度准则：用户未开启 RAG 检索功能，普通问题直接回答，无需调用 'delegate_to_rag_agent'。`
+	return RAGDisabledPromptTemplate
 }
 
 // EnhanceRuntimeMessages 统一在 Agent.Run 前动态增强消息历史 (自动动态刷最新 Skill 目录 + 自动注入 RAG 状态 Prompt)
@@ -278,7 +272,7 @@ func (b *BaseAgent) handleMaxIterationsReached(
 
 	stopMsg := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleUser,
-		Content: fmt.Sprintf("【系统强制安全指令】Agent 执行轮次已达到设定的最大上限 (%d 轮)。请不要再发起任何工具调用，立刻根据已获取的上下文信息向用户输出总结性的最终回答。", maxIterations),
+		Content: fmt.Sprintf(MaxIterationsStopUserPromptTemplate, maxIterations),
 	}
 	messages = append(messages, stopMsg)
 
@@ -292,7 +286,7 @@ func (b *BaseAgent) handleMaxIterationsReached(
 	if err != nil || finalMsg.Content == "" {
 		finalMsg = openai.ChatCompletionMessage{
 			Role:    openai.ChatMessageRoleAssistant,
-			Content: fmt.Sprintf("任务执行轮次已达到最大上限 (%d 轮)，已强制终止。以上为当前收集到的信息总结。", maxIterations),
+			Content: fmt.Sprintf(MaxIterationsStopAssistantPromptTemplate, maxIterations),
 		}
 	}
 

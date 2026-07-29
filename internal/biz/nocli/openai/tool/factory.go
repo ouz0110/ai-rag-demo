@@ -36,9 +36,15 @@ func NewRegistry(cfg *conf.Config, skillMgr *skill.Manager, engines ...*vector.V
 		list_file.ToolName:    list_file.NewTool(cfg),
 		readfiles.ToolName:    readfiles.NewTool(cfg),
 		terminaltool.ToolName: terminaltool.NewTool(cfg),
-		ragtool.ToolName:      ragtool.NewTool(cfg, vecEngine),
 	}
-	if skillMgr != nil {
+
+	// 📌 仅当 RAG 全局配置开启时才挂载 rag_search 工具
+	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Enable {
+		m[ragtool.ToolName] = ragtool.NewTool(cfg, vecEngine)
+	}
+
+	// 📌 仅当 Skill 全局配置开启时才挂载 load_skill 工具
+	if skillMgr != nil && cfg != nil && cfg.Source.Skill != nil && cfg.Source.Skill.Enable {
 		m[loadskill.ToolName] = loadskill.NewTool(cfg, skillMgr)
 	}
 

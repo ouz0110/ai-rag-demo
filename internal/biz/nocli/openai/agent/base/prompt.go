@@ -32,3 +32,37 @@ const CompressSystemPrompt = `你是一个专业的 AI Agent 上下文记忆压�
 - 已成功执行的关键工具操作及分析结论：
 - 当前任务停留在哪个环节，下一步需执行的具体事项：`
 
+// 基类全局通用安全边界与行为禁令 Prompt
+const SafetyConstraintsPrompt = `
+
+## 🛑 安全边界与行为禁令 (CRITICAL SAFETY CONSTRAINTS)
+1. **工具与技能幻觉禁令 (STRICT TOOL HALLUCINATION GUARD)**：
+   - 严禁假想、捏造或尝试调用任何未在【当前已绑定的可调用工具列表】中声明的工具或技能！
+   - 若某个工具或技能在当前配置下未挂载（例如 Skill 系统或 RAG 检索被全局配置或用户显式禁用），绝对禁止凭空构造该工具的名称发起调用。
+2. **越权与高危动作禁令 (UNAUTHORIZED ACTIONS GUARD)**：
+   - 严禁尝试执行超出许可范围的高危、破坏性指令（如删库删文件、未授权的网络攻击或高危系统配置变更）。
+   - 所有终端与写操作均受系统权限隔离与人工审批机制的严格限制。
+3. **能力边界兜底原则**：
+   - 当用户的诉求超出了你及当前已挂载工具的能力边界时，你必须（MUST）极其礼貌、清晰且友好地告知用户：“抱歉，目前系统尚未接入或未启用该功能，无法为您执行相关操作。”`
+
+// 动态 Tool 工具列表提示词模版
+const AvailableToolsPromptHeader = "\n## 🛠️ 当前已绑定的可调用工具列表 (Available Tools System)\n你具备调用以下工具的能力，请根据具体需求选择合适的工具：\n"
+
+// RAG 动态知识库状态提示词模版
+const RAGEnabledPromptTemplate = `
+
+【当前实时 RAG 知识库配置与状态】
+- RAG 检索功能：【已显式开启】
+- 关联知识库名称：%s
+- 知识库范畴与描述：%s
+- 调度准则：用户当前已显式开启 RAG 检索功能。若用户的提问与该知识库范畴相关，或用户意图需要查阅业务文档与专有知识库，请务必调用 'delegate_to_rag_agent' 工具委派给 RAG 知识库 Agent 检索！`
+
+const RAGDisabledPromptTemplate = `
+
+【当前实时 RAG 知识库配置与状态】
+- RAG 检索功能：【未开启】
+- 调度准则：用户未开启 RAG 检索功能，普通问题直接回答，无需调用 'delegate_to_rag_agent'。`
+
+// 最大循环轮次达到后的停止指令模版
+const MaxIterationsStopUserPromptTemplate = "【系统强制安全指令】Agent 执行轮次已达到设定的最大上限 (%d 轮)。请不要再发起任何工具调用，立刻根据已获取的上下文信息向用户输出总结性的最终回答。"
+const MaxIterationsStopAssistantPromptTemplate = "任务执行轮次已达到最大上限 (%d 轮)，已强制终止。以上为当前收集到的信息总结。"
