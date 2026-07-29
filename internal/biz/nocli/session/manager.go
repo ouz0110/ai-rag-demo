@@ -13,7 +13,6 @@ import (
 	"ai-rag-demo/internal/data"
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
-	"ai-rag-demo/internal/pkg/skill"
 	"ai-rag-demo/internal/pkg/utils"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -23,20 +22,17 @@ type SessionManager struct {
 	allDb         *data.DB
 	cfg           *conf.Config
 	agentRegistry *agent.Registry
-	skillManager  *skill.Manager
 }
 
 func NewSessionManager(
 	allDb *data.DB,
 	cfg *conf.Config,
 	agentRegistry *agent.Registry,
-	skillManager *skill.Manager,
 ) *SessionManager {
 	return &SessionManager{
 		allDb:         allDb,
 		cfg:           cfg,
 		agentRegistry: agentRegistry,
-		skillManager:  skillManager,
 	}
 }
 
@@ -57,7 +53,7 @@ func (m *SessionManager) InitOrCreateSession(ctx context.Context, sessionID, use
 	if !ok {
 		return "", fmt.Errorf("未找到默认 main agent")
 	}
-	systemPrompt := ag.SystemPrompt(agentWorkDir, m.skillManager)
+	systemPrompt := ag.SystemPrompt(agentWorkDir)
 	now := time.Now().Unix()
 
 	if sessionID == "" {

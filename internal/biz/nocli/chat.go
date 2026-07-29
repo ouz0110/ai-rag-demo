@@ -50,10 +50,10 @@ func NewChatBiz(
 		log.Errorw(context.Background(), "skill_scan_error", "path", skillsDir, "error", err)
 	}
 
-	agentReg := agent.NewRegistry(cfg, openaiChatModel, vectorEngine)
 	skillMgr := skill.NewManager(skillReg)
+	agentReg := agent.NewRegistry(cfg, openaiChatModel, skillMgr, vectorEngine)
 
-	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg, skillMgr)
+	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg)
 
 	var compressCfg *conf.OpenAIContextCompressConfig
 	if cfg != nil && cfg.Source.OpenAI != nil {

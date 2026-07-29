@@ -7,7 +7,6 @@ import (
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	dataBase "ai-rag-demo/internal/data/base"
-	"ai-rag-demo/internal/pkg/skill"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -53,7 +52,7 @@ type RunOptions struct {
 type IAgent interface {
 	Name() string
 	Description() string
-	SystemPrompt(workDir string, skillMgr *skill.Manager) string
+	SystemPrompt(workDir string) string
 	MaxIterations() int
 	Model() string
 	Tools() []openai.Tool

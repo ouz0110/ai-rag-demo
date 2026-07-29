@@ -18,7 +18,7 @@ type AgentToolArgs struct {
 }
 
 type AgentToolOptions struct {
-	PassFullContextToSubAgent  bool // 父 -> 子：是否将父 Agent 的完整历史消息透传给子 Agent（默认 false）
+	PassFullContextToSubAgent bool // 父 -> 子：是否将父 Agent 的完整历史消息透传给子 Agent（默认 false）
 	ReturnFullContextToParent bool // 子 -> 父：是否将子 Agent 内部多轮执行历史追加回父 Agent（默认 false）
 	StreamSubAgentExecution   bool // 是否将子 Agent 的中间执行过程流式推送给用户（默认 true）
 }
@@ -78,7 +78,7 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		}
 	}
 
-	systemPrompt := t.targetAgent.SystemPrompt(".", nil)
+	systemPrompt := t.targetAgent.SystemPrompt(".")
 	if kbName, ok := ctx.Value(base.ParentKBNameKey).(string); ok && kbName != "" {
 		kbDesc, _ := ctx.Value(base.ParentKBDescriptionKey).(string)
 		systemPrompt += fmt.Sprintf("\n\n【当前目标知识库配置与范畴】\n- 知识库名称：%s\n- 知识库描述：%s\n请务必评估用户提问与该知识库范畴的关联性。若关联，请先使用 rag_search 进行检索；若检索无相关内容或问题与知识库范畴无关，请客观明确告知用户。", kbName, kbDesc)

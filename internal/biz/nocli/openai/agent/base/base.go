@@ -7,6 +7,7 @@ import (
 	"ai-rag-demo/internal/pkg/log"
 	"context"
 	"fmt"
+	"strings"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -78,6 +79,38 @@ func (b *BaseAgent) Tools() []openai.Tool {
 		return []openai.Tool{}
 	}
 	return b.toolRegistry.BuildTools()
+}
+
+// BuildToolsPrompt 动态生成当前 Agent 已绑定注册的所有 Tool 的名称与描述说明
+func (b *BaseAgent) BuildToolsPrompt() string {
+	tools := b.Tools()
+	if len(tools) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n## 🛠️ 当前已绑定的可调用工具列表 (Available Tools System)\n")
+	sb.WriteString("你具备调用以下工具的能力，请根据具体需求选择合适的工具：\n")
+	for _, t := range tools {
+		if t.Function != nil {
+			sb.WriteString(fmt.Sprintf("- **'%s'**: %s\n", t.Function.Name, t.Function.Description))
+		}
+	}
+	return sb.String()
+}
+
+// BuildFullSystemPrompt 统一进行 Agent 系统提示词的基类模版组装
+// 自动将子类 Agent 自定义的核心人设 (corePrompt) 与基类感知的 Tool 清单及 Skill 目录模版进行有机拼接
+func (b *BaseAgent) BuildFullSystemPrompt(corePrompt string) string {
+	var sb strings.Builder
+
+	sb.WriteString(strings.TrimSpace(corePrompt))
+
+	toolsPrompt := b.BuildToolsPrompt()
+	if toolsPrompt != "" {
+		sb.WriteString("\n\n" + toolsPrompt)
+	}
+	return sb.String()
 }
 
 func (b *BaseAgent) Model() string {

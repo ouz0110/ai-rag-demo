@@ -9,9 +9,11 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 
 	list_file "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
+	loadskill "ai-rag-demo/internal/biz/nocli/openai/tool/load_skill"
 	ragtool "ai-rag-demo/internal/biz/nocli/openai/tool/rag"
 	readfiles "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
 	terminaltool "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
+	"ai-rag-demo/internal/pkg/skill"
 )
 
 type Tool interface {
@@ -24,19 +26,24 @@ type Registry struct {
 	tools map[string]Tool
 }
 
-func NewRegistry(cfg *conf.Config, engines ...*vector.VectorEngine) *Registry {
+func NewRegistry(cfg *conf.Config, skillMgr *skill.Manager, engines ...*vector.VectorEngine) *Registry {
 	var vecEngine *vector.VectorEngine
 	if len(engines) > 0 {
 		vecEngine = engines[0]
 	}
 
+	m := map[string]Tool{
+		list_file.ToolName:    list_file.NewTool(cfg),
+		readfiles.ToolName:    readfiles.NewTool(cfg),
+		terminaltool.ToolName: terminaltool.NewTool(cfg),
+		ragtool.ToolName:      ragtool.NewTool(cfg, vecEngine),
+	}
+	if skillMgr != nil {
+		m[loadskill.ToolName] = loadskill.NewTool(cfg, skillMgr)
+	}
+
 	return &Registry{
-		tools: map[string]Tool{
-			list_file.ToolName:    list_file.NewTool(cfg),
-			readfiles.ToolName:    readfiles.NewTool(cfg),
-			terminaltool.ToolName: terminaltool.NewTool(cfg),
-			ragtool.ToolName:      ragtool.NewTool(cfg, vecEngine),
-		},
+		tools: m,
 	}
 }
 
