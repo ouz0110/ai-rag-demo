@@ -285,6 +285,7 @@ func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessage
 			Text:      chatMsg.Content,
 			CompressInfo: &pb.CompressInfo{
 				SummaryPreview: chatMsg.Content,
+				Status:         pb.CompressStatus_CS_COMPLETED,
 			},
 		})
 		return chunks

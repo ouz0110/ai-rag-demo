@@ -118,7 +118,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				promptMsgs := make([]openai.ChatCompletionMessage, 0, len(toSum)+1)
 				promptMsgs = append(promptMsgs, openai.ChatCompletionMessage{
 					Role:    openai.ChatMessageRoleSystem,
-					Content: "你是一个精炼的 AI 上下文摘要助手。请务必将传入的历史对话详细归纳为一份包含【前文探讨核心主题】、【已达成的共识与决策】和【关键参数/输出结果】的上下文记忆摘要。这份摘要将作为 AI 下一轮对话的完整前文记忆，确保关键细节不遗漏。控制在 500 字以内。",
+					Content: CompressSystemPrompt,
 				})
 				promptMsgs = append(promptMsgs, toSum...)
 				sumReq := openai.ChatCompletionRequest{
@@ -134,7 +134,29 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				return sumResp.Content, nil
 			})
 
-			compRes, err := opts.Compressor.Compress(ctx, opts.CompressCount, messages, summarizer)
+			onCompressStart := compressor.OnCompressStartFunc(func(origTokens, toCompressCount int) {
+				log.Infow(ctx, "agent_context_compression_started",
+					"session_id", sessionID,
+					"orig_tokens", origTokens,
+					"to_compress_count", toCompressCount,
+				)
+				// 🎯 确定压缩，在开始后台耗时提炼摘要前，第一时间向客户端发送 SET_CONTEXT_COMPRESSED 开始通知事件
+				emitter(&pb.StreamChunk{
+					Event:     pb.StreamEventType_SET_CONTEXT_COMPRESSED,
+					SessionId: sessionID,
+					Status:    pb.SessionStatus_SS_RUNNING,
+					Text:      "检测到对话上下文较长，正在提炼历史记忆并执行上下文压缩...",
+					CompressInfo: &pb.CompressInfo{
+						OriginalTokens:     int32(origTokens),
+						CompressedMsgCount: int32(toCompressCount),
+						CompressCount:      opts.CompressCount + 1,
+						SummaryPreview:     "正在提炼历史记忆摘要...",
+						Status:             pb.CompressStatus_CS_COMPRESSING,
+					},
+				})
+			})
+
+			compRes, err := opts.Compressor.Compress(ctx, opts.CompressCount, messages, summarizer, onCompressStart)
 			if err == nil && compRes != nil && compRes.IsCompressed {
 				messagesForLLM = compRes.CompressedMessages
 				if compRes.NewCheckpointMsg != nil {
@@ -148,7 +170,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 					"is_max_limit", compRes.IsMaxLimitReached,
 				)
 
-				// 向客户端发送 SET_CONTEXT_COMPRESSED 通知事件
+				// 向客户端发送最终 SET_CONTEXT_COMPRESSED 结果通知事件
 				emitter(&pb.StreamChunk{
 					Event:     pb.StreamEventType_SET_CONTEXT_COMPRESSED,
 					SessionId: sessionID,
@@ -161,6 +183,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 						CompressCount:      opts.CompressCount + 1,
 						SummaryPreview:     compRes.SummaryText,
 						IsMaxLimitReached:  compRes.IsMaxLimitReached,
+						Status:             pb.CompressStatus_CS_COMPLETED,
 					},
 				})
 			}

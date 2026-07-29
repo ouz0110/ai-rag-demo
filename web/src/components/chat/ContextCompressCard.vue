@@ -6,13 +6,16 @@
       
       <!-- 主内容小卡片 -->
       <div class="compress-badge flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-slate-900/80 border border-indigo-500/30 backdrop-blur-md shadow-lg shadow-indigo-950/40 text-xs text-indigo-200">
-        <Sparkles class="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
-        <span class="font-medium">上下文已自动压缩提炼</span>
-        <span v-if="compressInfo?.original_tokens && compressInfo?.compressed_tokens" class="tokens-tag px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px]">
+        <Loader2 v-if="isCompressing" class="w-3.5 h-3.5 text-indigo-400 animate-spin" />
+        <Sparkles v-else class="w-3.5 h-3.5 text-indigo-400 animate-pulse" />
+        <span class="font-medium">
+          {{ isCompressing ? '正在提炼历史记忆并压缩上下文...' : '上下文已自动压缩提炼' }}
+        </span>
+        <span v-if="!isCompressing && compressInfo?.original_tokens && compressInfo?.compressed_tokens" class="tokens-tag px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px]">
           {{ compressInfo.original_tokens }} → {{ compressInfo.compressed_tokens }} Tokens
         </span>
         <button 
-          v-if="summaryText" 
+          v-if="summaryText && !isCompressing" 
           @click="isExpanded = !isExpanded" 
           class="ml-1 hover:text-white transition-colors flex items-center gap-0.5 text-[11px] text-indigo-300 underline underline-offset-2"
         >
@@ -33,7 +36,7 @@
       leave-from-class="opacity-100 translate-y-0 max-h-96"
       leave-to-class="opacity-0 -translate-y-2 max-h-0"
     >
-      <div v-if="isExpanded" class="summary-details-panel mt-2.5 w-full max-w-2xl bg-slate-900/90 border border-indigo-500/20 rounded-xl p-3.5 text-xs text-slate-300 shadow-xl backdrop-blur-md">
+      <div v-if="isExpanded && !isCompressing" class="summary-details-panel mt-2.5 w-full max-w-2xl bg-slate-900/90 border border-indigo-500/20 rounded-xl p-3.5 text-xs text-slate-300 shadow-xl backdrop-blur-md">
         <!-- 熔断提醒 -->
         <div v-if="compressInfo?.is_max_limit_reached" class="flex items-center justify-between gap-3 p-2.5 mb-2 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-xs">
           <div class="flex items-center gap-2">
@@ -59,9 +62,9 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { Sparkles, ChevronDown, AlertTriangle } from 'lucide-vue-next';
+import { Sparkles, ChevronDown, AlertTriangle, Loader2 } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat';
-import type { CompressInfo } from '../../types/api';
+import { CompressStatus, type CompressInfo } from '../../types/api';
 
 const props = defineProps<{
   compressInfo?: CompressInfo;
@@ -70,6 +73,30 @@ const props = defineProps<{
 
 const chatStore = useChatStore();
 const isExpanded = ref(false);
+
+const isCompressing = computed(() => {
+  const status = props.compressInfo?.status;
+  // 1. 显式根据 status 枚举判定 (1: 压缩中, 2: 已完成)
+  if (status === CompressStatus.CS_COMPRESSING) {
+    return true;
+  }
+  if (status === CompressStatus.CS_COMPLETED) {
+    return false;
+  }
+
+  // 2. 降级兼容: 根据 tokens 数据与占位符文案判定
+  if (
+    props.compressInfo?.original_tokens &&
+    !props.compressInfo?.compressed_tokens &&
+    !props.compressInfo?.is_max_limit_reached
+  ) {
+    return true;
+  }
+  if (summaryText.value === '正在提炼历史记忆摘要...') {
+    return true;
+  }
+  return false;
+});
 
 const summaryText = computed(() => {
   if (props.compressInfo?.summary_preview) {

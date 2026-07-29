@@ -120,6 +120,14 @@ export interface StreamError {
   message: string;
 }
 
+// 上下文压缩状态
+export const CompressStatus = {
+  CS_UNSPECIFIED: 0,
+  CS_COMPRESSING: 1, // 压缩/提炼中
+  CS_COMPLETED: 2,   // 压缩完成
+} as const;
+export type CompressStatus = typeof CompressStatus[keyof typeof CompressStatus];
+
 // 上下文压缩事件详情
 export interface CompressInfo {
   original_tokens?: number;
@@ -128,6 +136,7 @@ export interface CompressInfo {
   compress_count?: number;
   summary_preview?: string;
   is_max_limit_reached?: boolean;
+  status?: CompressStatus;
 }
 
 // 统一数据 Chunk

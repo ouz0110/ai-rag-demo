@@ -132,6 +132,13 @@ message StreamError {
   string message = 2;
 }
 
+// 上下文压缩状态
+enum CompressStatus {
+  CS_UNSPECIFIED = 0;
+  CS_COMPRESSING = 1; // 压缩/提炼中
+  CS_COMPLETED = 2;   // 压缩完成
+}
+
 // 上下文压缩详情
 message CompressInfo {
   int32 original_tokens = 1;      // 压缩前 Token 数
@@ -140,6 +147,7 @@ message CompressInfo {
   int32 compress_count = 4;        // 当前已压缩总次数
   string summary_preview = 5;     // 摘要内容预览
   bool is_max_limit_reached = 6;   // 是否达到了最大压缩次数限制 (触发熔断)
+  CompressStatus status = 7;      // 当前压缩状态
 }
 
 // 统一数据 Chunk (对应 SSE data 部分与非流式返回的统一 JSON 结构)

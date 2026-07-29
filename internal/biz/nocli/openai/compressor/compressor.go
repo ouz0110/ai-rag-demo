@@ -13,6 +13,7 @@ import (
 )
 
 type SummarizerFunc func(ctx context.Context, toSummarize []openai.ChatCompletionMessage) (string, error)
+type OnCompressStartFunc func(origTokens int, compressedCount int)
 
 type ICompressor interface {
 	EstimateTokens(msgs []openai.ChatCompletionMessage) int
@@ -22,6 +23,7 @@ type ICompressor interface {
 		currentCompressCount int32,
 		msgs []openai.ChatCompletionMessage,
 		summarizerFunc SummarizerFunc,
+		onStart OnCompressStartFunc,
 	) (*CompressResult, error)
 }
 
@@ -74,6 +76,7 @@ func (c *ContextCompressor) Compress(
 	currentCompressCount int32,
 	msgs []openai.ChatCompletionMessage,
 	summarizerFunc SummarizerFunc,
+	onStart OnCompressStartFunc,
 ) (*CompressResult, error) {
 	should, origTokens := c.ShouldCompress(msgs)
 	if !should {
@@ -150,6 +153,11 @@ func (c *ContextCompressor) Compress(
 			IsMaxLimitReached:  true,
 			NewCheckpointMsg:   nil, // 熔断后不再持久化新的 LLM 摘要 Checkpoint
 		}, nil
+	}
+
+	// 🎯 确定进行 LLM 摘要生成，在此处第一时间向客户端触发 onStart 回调
+	if onStart != nil {
+		onStart(origTokens, len(toCompress))
 	}
 
 	// 3. 正常调用 LLM 生成摘要 (读取配置的动态超时时间，默认 30 秒)

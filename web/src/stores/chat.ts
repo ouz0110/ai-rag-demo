@@ -518,17 +518,56 @@ export const useChatStore = defineStore('chat', () => {
 
     const event = chunk.event;
     if (event === 8 || event === 'SET_CONTEXT_COMPRESSED') {
-      messages.value.push({
-        id: 'compress-' + Date.now() + Math.random(),
-        role: 'system',
-        content: chunk.text || chunk.Text || '',
-        reasoning_content: '',
-        agent_name: '',
-        tools: [],
-        segments: [],
-        created_at: Date.now(),
-        compress_info: chunk.compress_info || chunk.compressInfo,
-      });
+      // 1. 在当前对话轮次中寻找是否已经存在一条由“压缩开始”通知创建的 system 压缩卡片
+      let existingCompressIndex = -1;
+      for (let i = messages.value.length - 1; i >= 0; i--) {
+        const m = messages.value[i];
+        if (m.role === 'system' && (m.id.startsWith('compress-') || m.compress_info)) {
+          existingCompressIndex = i;
+          break;
+        }
+        if (m.role === 'user') {
+          break;
+        }
+      }
+
+      if (existingCompressIndex !== -1) {
+        // 更新现有压缩卡片内容与压缩信息
+        const existingMsg = messages.value[existingCompressIndex];
+        if (chunk.text || chunk.Text) {
+          existingMsg.content = chunk.text || chunk.Text;
+        }
+        if (chunk.compress_info || chunk.compressInfo) {
+          existingMsg.compress_info = chunk.compress_info || chunk.compressInfo;
+        }
+      } else {
+        // 创建新的 system 压缩卡片
+        const compressMsg: UIChatMessage = {
+          id: 'compress-' + Date.now() + Math.random(),
+          role: 'system',
+          content: chunk.text || chunk.Text || '',
+          reasoning_content: '',
+          agent_name: '',
+          tools: [],
+          segments: [],
+          created_at: Date.now(),
+          compress_info: chunk.compress_info || chunk.compressInfo,
+        };
+
+        // 🎯 关键逻辑：若末尾是空 Assistant 占位消息 (isStreaming: true 且无内容)，则将压缩卡片插在占位消息前
+        const lastMsg = messages.value[messages.value.length - 1];
+        if (
+          lastMsg &&
+          lastMsg.role === 'assistant' &&
+          !lastMsg.content &&
+          !lastMsg.reasoning_content &&
+          (!lastMsg.segments || lastMsg.segments.length === 0)
+        ) {
+          messages.value.splice(messages.value.length - 1, 0, compressMsg);
+        } else {
+          messages.value.push(compressMsg);
+        }
+      }
       return;
     }
 
