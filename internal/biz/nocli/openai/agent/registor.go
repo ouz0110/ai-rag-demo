@@ -31,9 +31,9 @@ func NewRegistry(cfg *conf.Config, chatModel *chatmodel.ChatModel, engines ...*v
 
 	// 4. 为 MainAgent 动态注入 SubAgent 工具 (Agent-as-a-Tool)
 	defaultAgentOpts := AgentToolOptions{
-		PassFullContextToSubAgent: true, // 默认不透传父上下文给子
-		ReturnFullContextToParent: true, // 默认不返回子全部上下文给父
-		StreamSubAgentExecution:   true, // 默认流式展示子 Agent 执行过程
+		PassFullContextToSubAgent: true,  // 默认不透传父上下文给子
+		ReturnFullContextToParent: true,  // 默认不返回子全部上下文给父
+		StreamSubAgentExecution:   false, // 默认流式展示子 Agent 执行过程
 	}
 	mainAgent.RegisterSubAgentTool(fileAnalyzer, chatModel, defaultAgentOpts)
 	mainAgent.RegisterSubAgentTool(ragAgent, chatModel, defaultAgentOpts)

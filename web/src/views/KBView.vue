@@ -95,7 +95,7 @@
               <div class="flex items-start justify-between">
                 <div class="flex-1 min-w-0">
                   <h3 class="font-bold text-xs text-gray-100 truncate">{{ kbStore.defaultKB.name }}</h3>
-                  <p class="text-[11px] text-gray-400 mt-1 line-clamp-2 leading-relaxed">{{ kbStore.defaultKB.description || '系统默认公共知识库' }}</p>
+                  <p class="text-[11px] text-gray-400 mt-1 line-clamp-2 leading-relaxed" :title="kbStore.defaultKB.description || '系统默认公共知识库'">{{ kbStore.defaultKB.description || '系统默认公共知识库' }}</p>
                 </div>
                 <BookOpen class="w-4 h-4 text-cyan-400 shrink-0 ml-2 mt-0.5" />
               </div>
@@ -127,7 +127,7 @@
                 <div class="flex items-start justify-between">
                   <div class="flex-1 min-w-0">
                     <h3 class="font-bold text-xs text-gray-100 truncate">{{ kb.name }}</h3>
-                    <p class="text-[11px] text-gray-400 mt-1 line-clamp-1 leading-relaxed">{{ kb.description || '无描述' }}</p>
+                    <p class="text-[11px] text-gray-400 mt-1 line-clamp-1 leading-relaxed" :title="kb.description || '无描述'">{{ kb.description || '无描述' }}</p>
                   </div>
                   <button
                     @click.stop="kb?.kb_id && promptDeleteKB(kb.kb_id, kb.name)"
@@ -205,7 +205,7 @@
                 <div class="text-xs font-mono text-cyan-300 mt-1.5 truncate" :title="kbStore.activeKbId">
                   {{ kbStore.activeKbId }}
                 </div>
-                <div class="text-[10px] text-gray-500 truncate mt-0.5">{{ activeKBDesc }}</div>
+                <div class="text-[10px] text-gray-500 line-clamp-3 leading-relaxed mt-0.5" :title="activeKBDesc">{{ activeKBDesc }}</div>
               </div>
               <div class="kpi-icon-wrapper bg-blue-500/10 border border-blue-500/30 text-blue-400">
                 <HardDrive class="w-5 h-5" />

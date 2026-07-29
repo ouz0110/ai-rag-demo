@@ -11,6 +11,7 @@ import {
   type SessionInfo,
   type StreamChunk,
   type PendingToolCall,
+  type CompressInfo,
 } from '../types/api';
 
 export interface UIStreamTool {
@@ -37,7 +38,7 @@ export type ChatSegment = ChatSegmentText | ChatSegmentTool;
 
 export interface UIChatMessage {
   id: string;
-  role: 'user' | 'assistant' | 'tool';
+  role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   reasoning_content: string;
   agent_name: string;
@@ -46,6 +47,7 @@ export interface UIChatMessage {
   created_at: number;
   isStreaming?: boolean;
   error?: string;
+  compress_info?: CompressInfo;
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -300,8 +302,22 @@ export const useChatStore = defineStore('chat', () => {
 
     for (const chunk of chunks) {
       const role = chunk.role || 'assistant';
+      const event = chunk.event;
 
-      if (role === 'user') {
+      if (event === 8 || event === 'SET_CONTEXT_COMPRESSED' || role === 'system') {
+        currentAssistantMsg = null;
+        list.push({
+          id: 'compress-' + Date.now() + Math.random(),
+          role: 'system',
+          content: chunk.text || chunk.Text || '',
+          reasoning_content: '',
+          agent_name: '',
+          tools: [],
+          segments: [],
+          created_at: Date.now(),
+          compress_info: chunk.compress_info || chunk.compressInfo,
+        });
+      } else if (role === 'user') {
         currentAssistantMsg = null;
         list.push({
           id: 'user-' + Date.now() + Math.random(),
@@ -498,6 +514,22 @@ export const useChatStore = defineStore('chat', () => {
 
     if (typeof chunk.status !== 'undefined') {
       sessionStatus.value = chunk.status;
+    }
+
+    const event = chunk.event;
+    if (event === 8 || event === 'SET_CONTEXT_COMPRESSED') {
+      messages.value.push({
+        id: 'compress-' + Date.now() + Math.random(),
+        role: 'system',
+        content: chunk.text || chunk.Text || '',
+        reasoning_content: '',
+        agent_name: '',
+        tools: [],
+        segments: [],
+        created_at: Date.now(),
+        compress_info: chunk.compress_info || chunk.compressInfo,
+      });
+      return;
     }
 
     let targetMsg = messages.value[messages.value.length - 1];

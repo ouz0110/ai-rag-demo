@@ -2,6 +2,7 @@ package base
 
 import (
 	pb "ai-rag-demo/api/nocli/v1"
+	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	"ai-rag-demo/internal/pkg/log"
 	"context"
 	"fmt"
@@ -93,18 +94,83 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 	}
 
 	maxIterations := b.MaxIterations()
+	var newCheckpointMsg *openai.ChatCompletionMessage
 
 	for {
 		iteration++
 		if iteration > maxIterations {
-			return b.handleMaxIterationsReached(ctx, sessionID, model, maxIterations, messages, baseFields, emitter, fetcher)
+			loopRes, err := b.handleMaxIterationsReached(ctx, sessionID, model, maxIterations, messages, baseFields, emitter, fetcher)
+			if loopRes != nil {
+				loopRes.NewCheckpointMsg = newCheckpointMsg
+			}
+			return loopRes, err
 		}
 
-		log.Debugw(ctx, "llm_call_start", append(baseFields, "iteration", iteration, "messages_count", len(messages), "tools_count", len(tools))...)
+		// 🎯 校验并触发上下文压缩
+		messagesForLLM := messages
+		if opts.Compressor != nil {
+			syncFetcher := opts.SyncFetcher
+			if syncFetcher == nil {
+				syncFetcher = fetcher
+			}
+
+			summarizer := compressor.SummarizerFunc(func(sumCtx context.Context, toSum []openai.ChatCompletionMessage) (string, error) {
+				promptMsgs := make([]openai.ChatCompletionMessage, 0, len(toSum)+1)
+				promptMsgs = append(promptMsgs, openai.ChatCompletionMessage{
+					Role:    openai.ChatMessageRoleSystem,
+					Content: "你是一个精炼的 AI 上下文摘要助手。请务必将传入的历史对话详细归纳为一份包含【前文探讨核心主题】、【已达成的共识与决策】和【关键参数/输出结果】的上下文记忆摘要。这份摘要将作为 AI 下一轮对话的完整前文记忆，确保关键细节不遗漏。控制在 500 字以内。",
+				})
+				promptMsgs = append(promptMsgs, toSum...)
+				sumReq := openai.ChatCompletionRequest{
+					Model:    model,
+					Messages: SanitizeMessages(promptMsgs),
+				}
+				// 🎯 强用非流式 API 进行后台摘要提炼
+				sumResp, err := syncFetcher(sumCtx, sumReq)
+				if err != nil {
+					log.Warnw(ctx, "llm_summarizer_fetcher_failed", "error", err)
+					return "", err
+				}
+				return sumResp.Content, nil
+			})
+
+			compRes, err := opts.Compressor.Compress(ctx, opts.CompressCount, messages, summarizer)
+			if err == nil && compRes != nil && compRes.IsCompressed {
+				messagesForLLM = compRes.CompressedMessages
+				if compRes.NewCheckpointMsg != nil {
+					newCheckpointMsg = compRes.NewCheckpointMsg
+				}
+
+				log.Infow(ctx, "agent_context_compressed",
+					"session_id", sessionID,
+					"orig_tokens", compRes.OriginalTokens,
+					"compressed_tokens", compRes.CompressedTokens,
+					"is_max_limit", compRes.IsMaxLimitReached,
+				)
+
+				// 向客户端发送 SET_CONTEXT_COMPRESSED 通知事件
+				emitter(&pb.StreamChunk{
+					Event:     pb.StreamEventType_SET_CONTEXT_COMPRESSED,
+					SessionId: sessionID,
+					Status:    pb.SessionStatus_SS_RUNNING,
+					Text:      compRes.SummaryText,
+					CompressInfo: &pb.CompressInfo{
+						OriginalTokens:     int32(compRes.OriginalTokens),
+						CompressedTokens:   int32(compRes.CompressedTokens),
+						CompressedMsgCount: int32(compRes.CompressedCount),
+						CompressCount:      opts.CompressCount + 1,
+						SummaryPreview:     compRes.SummaryText,
+						IsMaxLimitReached:  compRes.IsMaxLimitReached,
+					},
+				})
+			}
+		}
+
+		log.Debugw(ctx, "llm_call_start", append(baseFields, "iteration", iteration, "messages_count", len(messagesForLLM), "tools_count", len(tools))...)
 
 		req := openai.ChatCompletionRequest{
 			Model:    model,
-			Messages: SanitizeMessages(messages),
+			Messages: SanitizeMessages(messagesForLLM),
 			Tools:    tools,
 		}
 		if len(req.Tools) == 0 {
@@ -139,6 +205,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Messages:         messages,
 				Reply:            msg.Content,
 				Status:           pb.SessionStatus_SS_IDLE,
+				NewCheckpointMsg: newCheckpointMsg,
 			}, nil
 		}
 
@@ -165,6 +232,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
+				NewCheckpointMsg: newCheckpointMsg,
 			}, nil
 		}
 		if res.HasReject {
@@ -181,10 +249,11 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Status:    pb.SessionStatus_SS_IDLE,
 			})
 			return &LoopResult{
-				AgentName: b.Name(),
-				Messages:  messages,
-				Reply:     "操作已被用户拒绝，终止后续流程",
-				Status:    pb.SessionStatus_SS_IDLE,
+				AgentName:        b.Name(),
+				Messages:         messages,
+				Reply:            "操作已被用户拒绝，终止后续流程",
+				Status:           pb.SessionStatus_SS_IDLE,
+				NewCheckpointMsg: newCheckpointMsg,
 			}, nil
 		}
 	}

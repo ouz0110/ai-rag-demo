@@ -1,5 +1,13 @@
 <template>
+  <!-- 0. 上下文压缩卡片展示 -->
+  <ContextCompressCard
+    v-if="msg.role === 'system'"
+    :compress-info="msg.compress_info"
+    :text="msg.content"
+  />
+
   <div
+    v-else
     class="message-wrapper group relative"
     :class="msg.role === 'user' ? 'user-layout' : 'assistant-layout'"
     @click="handleCardClick"
@@ -149,6 +157,7 @@ import hljs from 'highlight.js';
 import { Bot, Copy, Check, Brain, AlertCircle, Loader2 } from 'lucide-vue-next';
 import CoTBox from './CoTBox.vue';
 import ToolCallBox from './ToolCallBox.vue';
+import ContextCompressCard from './ContextCompressCard.vue';
 import { useUserStore } from '../../stores/user';
 import type { UIChatMessage } from '../../stores/chat';
 

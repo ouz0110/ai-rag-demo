@@ -38,14 +38,23 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 
 	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "agent_name", ag.Name(), "model", ag.Model())
 
+	var currentCompressCount int32 = 0
+	if sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID); ok && sessModel != nil {
+		currentCompressCount = sessModel.CompressCount
+	}
+
 	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, &messages, emitter)
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
+	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     sessionID,
 		Messages:      messages,
 		ApprovedTools: approvedTools,
 		Emitter:       emitter,
 		Fetcher:       fetcher,
+		SyncFetcher:   syncFetcher,
+		Compressor:    s.contextCompressor,
+		CompressCount: currentCompressCount,
 	})
 	if err != nil {
 		log.Errorw(ctx, "stream_completion_error", "session_id", sessionID, "error", err)
@@ -71,7 +80,7 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg); err != nil {
 		return err
 	}
 
@@ -89,7 +98,7 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		return err
 	}
 
-	messages, err := s.sessionMgr.LoadHistory(ctx, req.SessionId)
+	messages, err := s.sessionMgr.LoadHistoryForLLM(ctx, req.SessionId)
 	if err != nil {
 		return fmt.Errorf("加载对话历史失败: %v", err)
 	}
@@ -103,8 +112,14 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 
 	log.Debugw(ctx, "stream_resume_start", "session_id", req.SessionId, "agent_name", ag.Name(), "model", ag.Model())
 
+	var currentCompressCount int32 = 0
+	if sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, req.SessionId); ok && sessModel != nil {
+		currentCompressCount = sessModel.CompressCount
+	}
+
 	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, &messages, emitter)
 	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
+	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,
 		Messages:      messages,
@@ -112,6 +127,9 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		RejectedTools: rejectedTools,
 		Emitter:       emitter,
 		Fetcher:       fetcher,
+		SyncFetcher:   syncFetcher,
+		Compressor:    s.contextCompressor,
+		CompressCount: currentCompressCount,
 	})
 	if err != nil {
 		log.Errorw(ctx, "stream_resume_error", "session_id", req.SessionId, "error", err)
@@ -137,7 +155,7 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg); err != nil {
 		return err
 	}
 

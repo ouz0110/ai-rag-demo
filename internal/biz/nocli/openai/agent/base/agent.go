@@ -5,6 +5,7 @@ import (
 
 	pb "ai-rag-demo/api/nocli/v1"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
+	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/skill"
 
@@ -17,6 +18,7 @@ type LoopResult struct {
 	Reply            string
 	Status           pb.SessionStatus
 	PendingToolCalls []*pb.PendingToolCall
+	NewCheckpointMsg *openai.ChatCompletionMessage
 }
 
 type ProcessToolCallsResult struct {
@@ -43,6 +45,9 @@ type RunOptions struct {
 	RejectedTools map[string]string
 	Emitter       StreamEmitter
 	Fetcher       MessageFetcher
+	SyncFetcher   MessageFetcher
+	Compressor    compressor.ICompressor
+	CompressCount int32
 }
 
 type IAgent interface {

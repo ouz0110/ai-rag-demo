@@ -153,25 +153,57 @@ func (m *SessionManager) FinalizeSessionTurn(
 	newMsgs []openai.ChatCompletionMessage,
 	pendingInterrupt *dataBase.NocliInterruptModel,
 	finalStatus pb.SessionStatus,
+	checkpointMsg *openai.ChatCompletionMessage,
 ) error {
-	if pendingInterrupt != nil {
-		if err := m.allDb.Base.NocliInterruptRepo.CreateBatch(ctx, []*dataBase.NocliInterruptModel{pendingInterrupt}); err != nil {
-			return fmt.Errorf("创建中断记录失败: %v", err)
+	return m.allDb.Base.InTransaction(ctx, func(txCtx context.Context) error {
+		now := time.Now().Unix()
+
+		// 1. 如果触发了上下文压缩，先落盘 Checkpoint 消息 (MsgTypeCheckpoint = 1) 并更新 session 表状态
+		if checkpointMsg != nil {
+			bytes, err := json.Marshal(checkpointMsg)
+			if err != nil {
+				return fmt.Errorf("序列化 Checkpoint 消息失败: %v", err)
+			}
+			cpModel := &dataBase.NocliMessageModel{
+				SessionID: sessionID,
+				MsgType:   dataBase.MsgTypeCheckpoint,
+				Msg:       string(bytes),
+				CreatedAt: now,
+			}
+			if err := m.allDb.Base.NocliMessageRepo.Create(txCtx, cpModel); err != nil {
+				return fmt.Errorf("保存 Checkpoint 消息失败: %v", err)
+			}
+
+			// 查询会话当前 compress_count
+			sessModel, ok, err := m.allDb.Base.NocliSessionRepo.GetBySessionID(txCtx, sessionID)
+			var currentCount int32 = 0
+			if err == nil && ok {
+				currentCount = sessModel.CompressCount
+			}
+			_ = m.allDb.Base.NocliSessionRepo.UpdateCompressStatus(txCtx, sessionID, currentCount+1, cpModel.ID, now)
 		}
-		_ = m.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_INTERRUPTED)
-	}
 
-	if len(newMsgs) > 0 {
-		if err := m.SaveHistory(ctx, sessionID, newMsgs); err != nil {
-			return fmt.Errorf("保存对话历史失败: %v", err)
+		// 2. 落盘待挂起的中断事件
+		if pendingInterrupt != nil {
+			if err := m.allDb.Base.NocliInterruptRepo.CreateBatch(txCtx, []*dataBase.NocliInterruptModel{pendingInterrupt}); err != nil {
+				return fmt.Errorf("创建中断记录失败: %v", err)
+			}
+			_ = m.allDb.Base.NocliSessionRepo.UpdateStatus(txCtx, sessionID, pb.SessionStatus_SS_INTERRUPTED)
 		}
-	}
 
-	if finalStatus == pb.SessionStatus_SS_IDLE {
-		_ = m.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_IDLE)
-	}
+		// 3. 批量追加保存产生的增量消息
+		if len(newMsgs) > 0 {
+			if err := m.SaveHistory(txCtx, sessionID, newMsgs); err != nil {
+				return fmt.Errorf("保存对话历史失败: %v", err)
+			}
+		}
 
-	return nil
+		if finalStatus == pb.SessionStatus_SS_IDLE {
+			_ = m.allDb.Base.NocliSessionRepo.UpdateStatus(txCtx, sessionID, pb.SessionStatus_SS_IDLE)
+		}
+
+		return nil
+	})
 }
 
 // ListSessions 分页获取当前用户的历史会话列表
@@ -242,11 +274,26 @@ func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessage
 		return nil
 	}
 
+	chunks := make([]*pb.StreamChunk, 0)
+
+	// 1. 如果是 Checkpoint 描述消息 (MsgType == 1)，精准映射为 SET_CONTEXT_COMPRESSED 弹卡
+	if model.MsgType == dataBase.MsgTypeCheckpoint {
+		chunks = append(chunks, &pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_CONTEXT_COMPRESSED,
+			Role:      "system",
+			SessionId: sessionID,
+			Text:      chatMsg.Content,
+			CompressInfo: &pb.CompressInfo{
+				SummaryPreview: chatMsg.Content,
+			},
+		})
+		return chunks
+	}
+
+	// 2. 如果是普通 System 消息 (如 Agent 角色设定提示词)，不在前端聊天流中重复渲染为卡片
 	if chatMsg.Role == "system" {
 		return nil
 	}
-
-	chunks := make([]*pb.StreamChunk, 0)
 
 	switch chatMsg.Role {
 	case openai.ChatMessageRoleUser:

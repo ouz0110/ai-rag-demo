@@ -94,6 +94,7 @@ export const StreamEventType = {
   SET_INTERRUPT: 5,   // 触发中断挂起 (人工授权)
   SET_DONE: 6,        // 流传输正常完成
   SET_ERROR: 7,       // 异常错误
+  SET_CONTEXT_COMPRESSED: 8, // 上下文压缩触发事件
 } as const;
 export type StreamEventType = typeof StreamEventType[keyof typeof StreamEventType];
 
@@ -119,9 +120,19 @@ export interface StreamError {
   message: string;
 }
 
+// 上下文压缩事件详情
+export interface CompressInfo {
+  original_tokens?: number;
+  compressed_tokens?: number;
+  compressed_msg_count?: number;
+  compress_count?: number;
+  summary_preview?: string;
+  is_max_limit_reached?: boolean;
+}
+
 // 统一数据 Chunk
 export interface StreamChunk {
-  event: StreamEventType | string;
+  event: StreamEventType | string | number;
   agent_name?: string;
   session_id?: string;
   status?: SessionStatus;
@@ -131,6 +142,7 @@ export interface StreamChunk {
   pending_tool_calls?: PendingToolCall[];
   error?: StreamError;
   role?: string;
+  compress_info?: CompressInfo;
 }
 
 // 补全请求

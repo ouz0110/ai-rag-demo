@@ -1,4 +1,4 @@
-secret: 87S7yST0Bx249iSqxUhzR
+secret: your-secret-key-placeholder
 name: ai_rag_demo_api
 env: local
 version: v1.0.0
@@ -9,10 +9,10 @@ i18n:
     - active.zh-cn.toml
 service:
 server:
-  domain: ${SRV_DOMAIN:https://dev.ai-rag-demo.com/ai-rag-demo/api}
+  domain: ${SRV_DOMAIN:https://dev.example.com/demo/api}
   http:
     addr: 0.0.0.0:8001
-    timeout: 15s
+    timeout: 300s
   grpc:
     addr: 0.0.0.0:8002
     timeout: 5s
@@ -43,15 +43,26 @@ source:
       max_open_conns: 200
       max_lifetime: 600
   nacos:
-    addr: nacos-dev.ai-rag-demo.com
+    addr: nacos-dev.example.com
     port: "80"
     access_key_id:
     access_key_secret:
     namespace:
-    openai:
-    api_key: "sk-xxx"
+    log:
+      level: debug
+  openai:
+    api_key: "sk-your-openai-api-key-placeholder"
     base_url: "https://api.openai.com/v1"
     model: "gpt-4o"
+    context_compress:
+      enable: true
+      max_context_tokens: 128000
+      compress_ratio: 0.75
+      max_compress_count: 5
+      min_uncompressed_msgs: 6
+      keep_recent_messages: 6
+      max_summary_tokens: 500
+      timeout: 30                         # 摘要生成硬超时时间 (单位：秒)
   vector_db:
     driver: "milvus"
     milvus:
@@ -72,15 +83,55 @@ source:
       dimension: 1024                       # 向量维度配置 (如 1024, 1536, 768)
     rerank:
       enable: true
-      driver: "llm"                        # 使用 OpenAI 兼容模式直连 Ollama 重排服务
+      driver: "llm"                         # 使用 OpenAI 兼容模式直连 Ollama 重排服务
       api_key: "ollama"
       base_url: "http://localhost:11434/v1" # Ollama 本地 API 地址
       model: "bge-reranker-large"           # Ollama 挂载的模型
       timeout: 2000                         # 重排超时 (2000ms)
+    billing:
+      enable: true
+      default_prices:
+        "gpt-4o":
+          input_unit_price: 0.2
+          output_unit_price: 0.8
+          unit_size: 1000
+        "bge-m3":
+          input_unit_price: 0.5
+          output_unit_price: 0.6
+          unit_size: 1000
+        "bge-reranker-large":
+          input_unit_price: 0.1
+          output_unit_price: 0.5
+          unit_size: 1000
     chunker:
       parent_size: 1500
       child_size: 512
       overlap: 30
       merge_threshold: 0.75
       split_threshold: 0.45
+  nocli:
+    work_dir: "./workspace/agent"
+    max_agent_iterations: 15
+    max_read_files: 20
+    max_total_bytes: 51200
+    chunk_lines: 1000
+    ignored_paths:
+      - ".git"
+      - "node_modules"
+      - "vendor"
+      - ".idea"
+      - ".vscode"
+      - "dist"
+      - "build"
+      - "tmp"
+      - "logs"
+    allowed_suffixes:
+      - ".go"
+      - ".proto"
+      - ".yaml"
+      - ".yml"
+      - ".json"
+      - ".md"
+      - ".sql"
+      - ".sh"
 external:

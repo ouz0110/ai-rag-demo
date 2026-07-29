@@ -9,6 +9,7 @@ import (
 	"ai-rag-demo/internal/biz/nocli/openai/agent"
 	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
+	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	"ai-rag-demo/internal/biz/nocli/session"
 	"ai-rag-demo/internal/biz/nocli/vector"
 	"ai-rag-demo/internal/cache"
@@ -22,14 +23,15 @@ import (
 )
 
 type ChatBiz struct {
-	cache           *cache.Cache
-	openaiChatModel *chatmodel.ChatModel
-	agentRegistry   *agent.Registry
-	skillManager    *skill.Manager
-	sessionMgr      *session.SessionManager
-	vectorEngine    *vector.VectorEngine
-	cfg             *conf.Config
-	allDb           *data.DB
+	cache             *cache.Cache
+	openaiChatModel   *chatmodel.ChatModel
+	agentRegistry     *agent.Registry
+	skillManager      *skill.Manager
+	sessionMgr        *session.SessionManager
+	vectorEngine      *vector.VectorEngine
+	cfg               *conf.Config
+	allDb             *data.DB
+	contextCompressor compressor.ICompressor
 }
 
 func NewChatBiz(
@@ -53,15 +55,25 @@ func NewChatBiz(
 
 	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg, skillMgr)
 
+	var compressCfg *conf.OpenAIContextCompressConfig
+	if cfg != nil && cfg.Source.OpenAI != nil {
+		compressCfg = cfg.Source.OpenAI.ContextCompress
+	}
+	var contextCompressor compressor.ICompressor
+	if compressCfg != nil {
+		contextCompressor = compressor.NewContextCompressor(compressCfg)
+	}
+
 	return &ChatBiz{
-		cache:           cache,
-		openaiChatModel: openaiChatModel,
-		agentRegistry:   agentReg,
-		skillManager:    skillMgr,
-		sessionMgr:      sessionMgr,
-		vectorEngine:    vectorEngine,
-		cfg:             cfg,
-		allDb:           allDb,
+		cache:             cache,
+		openaiChatModel:   openaiChatModel,
+		agentRegistry:     agentReg,
+		skillManager:      skillMgr,
+		sessionMgr:        sessionMgr,
+		vectorEngine:      vectorEngine,
+		cfg:               cfg,
+		allDb:             allDb,
+		contextCompressor: contextCompressor,
 	}
 }
 
@@ -131,6 +143,11 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
+	var currentCompressCount int32 = 0
+	if sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID); ok && sessModel != nil {
+		currentCompressCount = sessModel.CompressCount
+	}
+
 	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, req.EnableRag, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
@@ -139,6 +156,9 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		Messages:      messages,
 		ApprovedTools: approvedTools,
 		Fetcher:       fetcher,
+		SyncFetcher:   fetcher,
+		Compressor:    s.contextCompressor,
+		CompressCount: currentCompressCount,
 	})
 	duration := time.Since(start)
 
@@ -165,7 +185,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg); err != nil {
 		return nil, err
 	}
 
@@ -206,6 +226,11 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 
 	newMessageStart := len(messages)
 
+	var currentCompressCount int32 = 0
+	if sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, req.SessionId); ok && sessModel != nil {
+		currentCompressCount = sessModel.CompressCount
+	}
+
 	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, req.EnableRag, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -214,6 +239,9 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		ApprovedTools: approvedTools,
 		RejectedTools: rejectedTools,
 		Fetcher:       fetcher,
+		SyncFetcher:   fetcher,
+		Compressor:    s.contextCompressor,
+		CompressCount: currentCompressCount,
 	})
 	if err != nil {
 		return nil, err
@@ -232,7 +260,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status); err != nil {
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg); err != nil {
 		return nil, err
 	}
 

@@ -22,6 +22,12 @@ type NocliSessionModel struct {
 	Name string
 	// 会话状态
 	Status pb.SessionStatus
+	// 已触发上下文压缩次数
+	CompressCount int32
+	// 最近一次压缩时间戳
+	LastCompressedAt int64
+	// 最新上下文 Checkpoint 消息 ID
+	LastCheckpointMsgID int64
 	// 创建时间
 	CreatedAt int64
 	// 更新时间
@@ -34,25 +40,31 @@ func (NocliSessionModel) TableName() string {
 
 func (m *NocliSessionModel) DTO() *NocliSession {
 	return &NocliSession{
-		ID:        m.ID,
-		SessionID: m.SessionID,
-		Openid:    m.Openid,
-		Name:      m.Name,
-		Status:    m.Status,
-		CreatedAt: m.CreatedAt,
-		UpdatedAt: m.UpdatedAt,
+		ID:                  m.ID,
+		SessionID:           m.SessionID,
+		Openid:              m.Openid,
+		Name:                m.Name,
+		Status:              m.Status,
+		CompressCount:       m.CompressCount,
+		LastCompressedAt:    m.LastCompressedAt,
+		LastCheckpointMsgID: m.LastCheckpointMsgID,
+		CreatedAt:           m.CreatedAt,
+		UpdatedAt:           m.UpdatedAt,
 	}
 }
 
 // NocliSession 会话DTO
 type NocliSession struct {
-	ID        int64            `json:"id"`
-	SessionID string           `json:"session_id"`
-	Openid    string           `json:"openid"`
-	Name      string           `json:"name"`
-	Status    pb.SessionStatus `json:"status"`
-	CreatedAt int64            `json:"created_at"`
-	UpdatedAt int64            `json:"updated_at"`
+	ID                  int64            `json:"id"`
+	SessionID           string           `json:"session_id"`
+	Openid              string           `json:"openid"`
+	Name                string           `json:"name"`
+	Status              pb.SessionStatus `json:"status"`
+	CompressCount       int32            `json:"compress_count"`
+	LastCompressedAt    int64            `json:"last_compressed_at"`
+	LastCheckpointMsgID int64            `json:"last_checkpoint_msg_id"`
+	CreatedAt           int64            `json:"created_at"`
+	UpdatedAt           int64            `json:"updated_at"`
 }
 
 // NocliSessionRepo 会话数据仓库
@@ -89,6 +101,17 @@ func (s *NocliSessionRepo) UpdateName(ctx context.Context, sessionID, name strin
 
 func (s *NocliSessionRepo) UpdateStatus(ctx context.Context, sessionID string, status pb.SessionStatus) error {
 	return s.GormDB(ctx).Model(&NocliSessionModel{}).Where("session_id=?", sessionID).Update("status", status).Error
+}
+
+func (s *NocliSessionRepo) UpdateCompressStatus(ctx context.Context, sessionID string, compressCount int32, checkpointMsgID int64, now int64) error {
+	return s.GormDB(ctx).Model(&NocliSessionModel{}).
+		Where("session_id=?", sessionID).
+		Updates(map[string]interface{}{
+			"compress_count":         compressCount,
+			"last_checkpoint_msg_id": checkpointMsgID,
+			"last_compressed_at":     now,
+			"updated_at":             now,
+		}).Error
 }
 
 func (s *NocliSessionRepo) UpdateUpdatedAt(ctx context.Context, sessionID string, updatedAt int64) error {

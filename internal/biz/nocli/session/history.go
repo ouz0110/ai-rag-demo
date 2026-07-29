@@ -14,7 +14,7 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
-// LoadHistory 加载该会话在数据库中的完整历史消息集合
+// LoadHistory 加载该会话在数据库中的完整历史消息集合 (客户端全量呈现使用)
 func (m *SessionManager) LoadHistory(ctx context.Context, sessionID string) ([]openai.ChatCompletionMessage, error) {
 	models, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
 	if err != nil {
@@ -34,11 +34,62 @@ func (m *SessionManager) LoadHistory(ctx context.Context, sessionID string) ([]o
 	return messages, nil
 }
 
+// LoadHistoryForLLM 为 LLM 运行时精准加载【首部初始 System + 最新 Checkpoint 摘要 + 增量消息】
+func (m *SessionManager) LoadHistoryForLLM(ctx context.Context, sessionID string) ([]openai.ChatCompletionMessage, error) {
+	sess, ok, err := m.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID)
+	if err != nil || !ok {
+		return nil, fmt.Errorf("会话不存在: %s", sessionID)
+	}
+
+	// 1. 若未发生过 Checkpoint 压缩，直接加载全量历史
+	if sess.LastCheckpointMsgID == 0 {
+		return m.LoadHistory(ctx, sessionID)
+	}
+
+	// 2. 加载首部初始 System 消息群 (开头连续的 system 消息)
+	allModels, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	initialSysMsgs := make([]openai.ChatCompletionMessage, 0)
+	for _, model := range allModels {
+		var msg openai.ChatCompletionMessage
+		if err := json.Unmarshal([]byte(model.Msg), &msg); err != nil {
+			continue
+		}
+		if msg.Role == openai.ChatMessageRoleSystem {
+			initialSysMsgs = append(initialSysMsgs, msg)
+		} else {
+			break
+		}
+	}
+
+	// 3. 从 ID >= LastCheckpointMsgID 检索最新 Checkpoint 及其后续增量消息
+	incModels, err := m.allDb.Base.NocliMessageRepo.GetMessagesFromID(ctx, sessionID, sess.LastCheckpointMsgID)
+	if err != nil {
+		return nil, err
+	}
+
+	llmMessages := make([]openai.ChatCompletionMessage, 0, len(initialSysMsgs)+len(incModels))
+	llmMessages = append(llmMessages, initialSysMsgs...)
+
+	for _, model := range incModels {
+		var msg openai.ChatCompletionMessage
+		if err := json.Unmarshal([]byte(model.Msg), &msg); err != nil {
+			continue
+		}
+		llmMessages = append(llmMessages, msg)
+	}
+
+	return llmMessages, nil
+}
+
 // PrepareMessagesForCompletion 为 Completion 准备消息：处理过期中断、追加用户新消息并清洗未决 ToolCalls
 func (m *SessionManager) PrepareMessagesForCompletion(ctx context.Context, sessionID, userMsg string) ([]openai.ChatCompletionMessage, int, error) {
-	messages, err := m.LoadHistory(ctx, sessionID)
+	messages, err := m.LoadHistoryForLLM(ctx, sessionID)
 	if err != nil {
-		return nil, 0, fmt.Errorf("加载对话历史失败: %v", err)
+		return nil, 0, fmt.Errorf("加载 LLM 对话历史失败: %v", err)
 	}
 
 	cancelMsgs, err := m.CancelPendingInterrupts(ctx, sessionID)

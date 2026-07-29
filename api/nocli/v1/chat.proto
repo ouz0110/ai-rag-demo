@@ -107,6 +107,7 @@ enum StreamEventType {
   SET_INTERRUPT = 5;   // 触发中断挂起 (人工授权)
   SET_DONE = 6;        // 流传输正常完成
   SET_ERROR = 7;       // 异常错误
+  SET_CONTEXT_COMPRESSED = 8; // 上下文压缩触发事件
 }
 
 // 待确认的工具调用信息
@@ -131,6 +132,16 @@ message StreamError {
   string message = 2;
 }
 
+// 上下文压缩详情
+message CompressInfo {
+  int32 original_tokens = 1;      // 压缩前 Token 数
+  int32 compressed_tokens = 2;    // 压缩后 Token 数
+  int32 compressed_msg_count = 3; // 被压缩消息数
+  int32 compress_count = 4;        // 当前已压缩总次数
+  string summary_preview = 5;     // 摘要内容预览
+  bool is_max_limit_reached = 6;   // 是否达到了最大压缩次数限制 (触发熔断)
+}
+
 // 统一数据 Chunk (对应 SSE data 部分与非流式返回的统一 JSON 结构)
 message StreamChunk {
   // 事件类型
@@ -151,8 +162,10 @@ message StreamChunk {
   repeated PendingToolCall pending_tool_calls = 8;
   // 错误信息 (event == SET_ERROR)
   StreamError error = 9;
-  // 角色类型 ("user", "assistant", "tool")
+  // 角色类型 ("user", "assistant", "tool", "system")
   string role = 10;
+  // 压缩事件详情 (event == SET_CONTEXT_COMPRESSED)
+  CompressInfo compress_info = 11;
 }
 
 // 补全请求

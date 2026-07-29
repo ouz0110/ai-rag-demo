@@ -554,7 +554,6 @@ import {
   CheckCircle2,
   AlertCircle,
   FileText,
-  ChevronRight as ChevronRightIcon,
   X,
 } from 'lucide-vue-next';
 import { billingApi, type UserBalance, type BillingLog, type ModelPricing } from '../api/billing';

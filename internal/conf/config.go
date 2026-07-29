@@ -71,11 +71,23 @@ type OTel struct {
 	StdOut     bool    `yaml:"std_out"`
 }
 
+type OpenAIContextCompressConfig struct {
+	Enable              bool    `json:"enable" yaml:"enable"`                                 // 是否开启上下文压缩
+	MaxContextTokens    int     `json:"max_context_tokens" yaml:"max_context_tokens"`         // 模型最大上下文 Token 数
+	CompressRatio       float64 `json:"compress_ratio" yaml:"compress_ratio"`                 // 触发压缩的比例 (如 0.75)
+	MaxCompressCount    int     `json:"max_compress_count" yaml:"max_compress_count"`         // 单会话最大压缩次数限制
+	MinUncompressedMsgs int     `json:"min_uncompressed_msgs" yaml:"min_uncompressed_msgs"`   // 两次压缩之间必须积累的最小未压缩消息条数
+	KeepRecentMessages  int     `json:"keep_recent_messages" yaml:"keep_recent_messages"`     // 压缩时固定保留的最新消息数
+	MaxSummaryTokens    int     `json:"max_summary_tokens" yaml:"max_summary_tokens"`         // 摘要最大 Token 限制
+	Timeout             int     `json:"timeout" yaml:"timeout"`                               // 摘要生成超时时间 (单位：秒，默认 30)
+}
+
 type OpenAI struct {
-	APIKey  string         `json:"api_key" yaml:"api_key"`
-	BaseURL string         `json:"base_url" yaml:"base_url"`
-	Model   string         `json:"model" yaml:"model"`
-	Billing *BillingConfig `json:"billing" yaml:"billing"`
+	APIKey          string                       `json:"api_key" yaml:"api_key"`
+	BaseURL         string                       `json:"base_url" yaml:"base_url"`
+	Model           string                       `json:"model" yaml:"model"`
+	Billing         *BillingConfig               `json:"billing" yaml:"billing"`
+	ContextCompress *OpenAIContextCompressConfig `json:"context_compress" yaml:"context_compress"`
 }
 
 type AgentConfig struct {
