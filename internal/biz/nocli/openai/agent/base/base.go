@@ -4,6 +4,7 @@ import (
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli/openai/tool"
 	"ai-rag-demo/internal/conf"
+	"ai-rag-demo/internal/external/mcp"
 	"ai-rag-demo/internal/pkg/log"
 	"ai-rag-demo/internal/pkg/skill"
 	"context"
@@ -19,6 +20,7 @@ type BaseAgent struct {
 	cfg           *conf.Config
 	toolRegistry  *tool.Registry
 	skillMgr      *skill.Manager
+	mcpMgr        mcp.Manager
 	maxIterations int
 	tools         []openai.Tool
 	model         string
@@ -41,6 +43,14 @@ func (b *BaseAgent) SetSkillManager(skillMgr *skill.Manager) {
 
 func (b *BaseAgent) SkillManager() *skill.Manager {
 	return b.skillMgr
+}
+
+func (b *BaseAgent) SetMCPManager(mcpMgr mcp.Manager) {
+	b.mcpMgr = mcpMgr
+}
+
+func (b *BaseAgent) MCPManager() mcp.Manager {
+	return b.mcpMgr
 }
 
 func NewBaseAgent(name string, cfg *conf.Config, toolRegistry *tool.Registry) *BaseAgent {
@@ -159,7 +169,28 @@ func BuildRAGPromptFromContext(ctx context.Context) string {
 	return RAGDisabledPromptTemplate
 }
 
-// EnhanceRuntimeMessages 统一在 Agent.Run 前动态增强消息历史 (自动动态刷最新 Skill 目录 + 自动注入 RAG 状态 Prompt)
+// BuildMCPPromptFromContext 从 Context 中动态解析 MCP 配置并渲染 Prompt 增强块
+func BuildMCPPromptFromContext(ctx context.Context, mcpMgr mcp.Manager) string {
+	enableMCP, hasEnableMCP := ctx.Value(ParentEnableMCPKey).(bool)
+	if !hasEnableMCP || !enableMCP || mcpMgr == nil || !mcpMgr.IsEnabled() {
+		return ""
+	}
+
+	mcpTools, err := mcpMgr.ListAllTools(ctx)
+	if err != nil || len(mcpTools) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\n\n### 🔌 当前激活的 MCP (Model Context Protocol) 扩展能力系统：\n")
+	for _, st := range mcpTools {
+		sb.WriteString(fmt.Sprintf("- **服务 `%s` / 工具 `%s`**: %s\n", st.ServerName, st.Tool.Name, st.Tool.Description))
+	}
+	sb.WriteString("当需要使用上述 MCP 功能时，请调用物理工具 `call_mcp_tool`，并在参数中指定对应的 `server_name`、`tool_name` 以及所需的 JSON `arguments`。\n")
+	return sb.String()
+}
+
+// EnhanceRuntimeMessages 统一在 Agent.Run 前动态增强消息历史 (自动动态刷最新 Skill 目录 + 自动注入 RAG / MCP 状态 Prompt)
 func (b *BaseAgent) EnhanceRuntimeMessages(ctx context.Context, messages []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
 	if len(messages) == 0 {
 		return messages
@@ -211,6 +242,18 @@ func (b *BaseAgent) EnhanceRuntimeMessages(ctx context.Context, messages []opena
 					Content: ragPrompt,
 				},
 			}, newMsgs...)
+		}
+	}
+
+	// 3. 动态注入上下文中的 MCP 状态 Prompt
+	if b.mcpMgr != nil {
+		mcpPrompt := BuildMCPPromptFromContext(ctx, b.mcpMgr)
+		if mcpPrompt != "" {
+			if newMsgs[0].Role == openai.ChatMessageRoleSystem {
+				if !strings.Contains(newMsgs[0].Content, "### 🔌 当前激活的 MCP") {
+					newMsgs[0].Content += mcpPrompt
+				}
+			}
 		}
 	}
 

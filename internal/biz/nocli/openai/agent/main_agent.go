@@ -8,9 +8,11 @@ import (
 	"ai-rag-demo/internal/biz/nocli/openai/tool"
 	list_files "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
 	loadskill "ai-rag-demo/internal/biz/nocli/openai/tool/load_skill"
+	mcptool "ai-rag-demo/internal/biz/nocli/openai/tool/mcp_tool"
 	read_files "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
 	terminal "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
 	"ai-rag-demo/internal/conf"
+	"ai-rag-demo/internal/external/mcp"
 	"ai-rag-demo/internal/pkg/skill"
 )
 
@@ -19,21 +21,25 @@ const MainAgentName = "main"
 type MainAgent struct {
 	*base.BaseAgent
 	skillMgr *skill.Manager
+	mcpMgr   mcp.Manager
 }
 
-func NewMainAgent(cfg *conf.Config, baseTools *tool.Registry, skillMgr *skill.Manager) *MainAgent {
+func NewMainAgent(cfg *conf.Config, baseTools *tool.Registry, skillMgr *skill.Manager, mcpMgr mcp.Manager) *MainAgent {
 	// 📌 在此显式声明 MainAgent 初始绑定的物理工具集
 	tools := baseTools.Filter(
 		list_files.ToolName,
 		read_files.ToolName,
 		terminal.ToolName,
 		loadskill.ToolName,
+		mcptool.ToolName,
 	)
 	b := base.NewBaseAgent(MainAgentName, cfg, tools)
 	b.SetSkillManager(skillMgr)
+	b.SetMCPManager(mcpMgr)
 	return &MainAgent{
 		BaseAgent: b,
 		skillMgr:  skillMgr,
+		mcpMgr:    mcpMgr,
 	}
 }
 

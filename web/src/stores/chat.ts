@@ -415,6 +415,7 @@ export const useChatStore = defineStore('chat', () => {
         kb_id: kbStore.activeKbId,
         enable_rag: kbStore.enableRAG,
         enable_skill: kbStore.enableSkill,
+        enable_mcp: kbStore.enableMCP,
       },
       signal: abortController.signal,
       onChunk: (chunk: StreamChunk) => {
@@ -468,6 +469,7 @@ export const useChatStore = defineStore('chat', () => {
         kb_id: kbStore.activeKbId,
         enable_rag: kbStore.enableRAG,
         enable_skill: kbStore.enableSkill,
+        enable_mcp: kbStore.enableMCP,
       },
       signal: abortController.signal,
       onChunk: (chunk: StreamChunk) => {

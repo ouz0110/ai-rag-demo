@@ -8,6 +8,7 @@ import (
 	"ai-rag-demo/internal/biz/nocli/openai/tool"
 	"ai-rag-demo/internal/biz/nocli/vector"
 	"ai-rag-demo/internal/conf"
+	"ai-rag-demo/internal/external/mcp"
 	"ai-rag-demo/internal/pkg/skill"
 )
 
@@ -17,18 +18,18 @@ type Registry struct {
 }
 
 // NewRegistry 统一进行多 Agent 的构造与动态 Tool 注入装配
-func NewRegistry(cfg *conf.Config, chatModel *chatmodel.ChatModel, skillMgr *skill.Manager, engines ...*vector.VectorEngine) *Registry {
+func NewRegistry(cfg *conf.Config, chatModel *chatmodel.ChatModel, skillMgr *skill.Manager, mcpMgr mcp.Manager, engines ...*vector.VectorEngine) *Registry {
 	r := &Registry{
 		agents: make(map[string]base.IAgent),
 	}
 
-	// 1. 初始化全量底层物理工具仓库 (list_files, read_files, terminal, rag_search, load_skill)
-	baseTools := tool.NewRegistry(cfg, skillMgr, engines...)
+	// 1. 初始化全量底层物理工具仓库 (list_files, read_files, terminal, rag_search, load_skill, call_mcp_tool)
+	baseTools := tool.NewRegistry(cfg, skillMgr, mcpMgr, engines...)
 
 	// 2. 实例化各个 Agent (各 Agent 会在各自的构造函数内部，显式声明并挑选自己所需的物理工具)
 	fileAnalyzer := NewFileAnalyzerAgent(cfg, baseTools)
 	ragAgent := NewRAGAgent(cfg, baseTools)
-	mainAgent := NewMainAgent(cfg, baseTools, skillMgr)
+	mainAgent := NewMainAgent(cfg, baseTools, skillMgr, mcpMgr)
 
 	// 4. 为 MainAgent 动态注入 SubAgent 工具 (Agent-as-a-Tool)
 	defaultAgentOpts := AgentToolOptions{

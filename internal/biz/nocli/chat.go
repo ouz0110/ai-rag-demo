@@ -16,6 +16,7 @@ import (
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
 	dataBase "ai-rag-demo/internal/data/base"
+	"ai-rag-demo/internal/external/mcp"
 	"ai-rag-demo/internal/pkg/log"
 	"ai-rag-demo/internal/pkg/skill"
 
@@ -27,6 +28,7 @@ type ChatBiz struct {
 	openaiChatModel   *chatmodel.ChatModel
 	agentRegistry     *agent.Registry
 	skillManager      *skill.Manager
+	mcpManager        mcp.Manager
 	sessionMgr        *session.SessionManager
 	vectorEngine      *vector.VectorEngine
 	cfg               *conf.Config
@@ -40,6 +42,7 @@ func NewChatBiz(
 	cfg *conf.Config,
 	allDb *data.DB,
 	vectorEngine *vector.VectorEngine,
+	mcpMgr mcp.Manager,
 ) *ChatBiz {
 	var enableSkill bool
 	var skillsDir string
@@ -55,7 +58,7 @@ func NewChatBiz(
 	}
 
 	skillMgr := skill.NewManager(skillReg)
-	agentReg := agent.NewRegistry(cfg, openaiChatModel, skillMgr, vectorEngine)
+	agentReg := agent.NewRegistry(cfg, openaiChatModel, skillMgr, mcpMgr, vectorEngine)
 
 	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg)
 
@@ -73,6 +76,7 @@ func NewChatBiz(
 		openaiChatModel:   openaiChatModel,
 		agentRegistry:     agentReg,
 		skillManager:      skillMgr,
+		mcpManager:        mcpMgr,
 		sessionMgr:        sessionMgr,
 		vectorEngine:      vectorEngine,
 		cfg:               cfg,
@@ -81,7 +85,7 @@ func NewChatBiz(
 	}
 }
 
-func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill bool) (bool, bool) {
+func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill, reqMCP bool) (bool, bool, bool) {
 	finalRAG := false
 	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Enable {
 		finalRAG = reqRAG
@@ -92,7 +96,12 @@ func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill bool) (bool, bool) {
 		finalSkill = reqSkill
 	}
 
-	return finalRAG, finalSkill
+	finalMCP := false
+	if cfg != nil && cfg.Source.MCP != nil && cfg.Source.MCP.Enable {
+		finalMCP = reqMCP
+	}
+
+	return finalRAG, finalSkill, finalMCP
 }
 
 func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string, string) {
@@ -112,7 +121,7 @@ func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string,
 	return "", ""
 }
 
-func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill, enableMCP bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
 	if kbTenantID == "" {
 		kbTenantID = vector.DefaultTenantID
 	}
@@ -133,6 +142,7 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 		KBDescription: kbDesc,
 		EnableRAG:     enableRAG,
 		EnableSkill:   enableSkill,
+		EnableMCP:     enableMCP,
 		Messages:      *messages,
 		Appender: func(msgs []openai.ChatCompletionMessage) {
 			*messages = append(*messages, msgs...)
@@ -167,8 +177,8 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	finalRAG, finalSkill := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill)
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, &messages, nil)
+	finalRAG, finalSkill, finalMCP := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, &messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -251,8 +261,8 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	finalRAG, finalSkill := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill)
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, &messages, nil)
+	finalRAG, finalSkill, finalMCP := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,

@@ -111,6 +111,29 @@ type SkillConfig struct {
 	Path   string `json:"path" yaml:"path"`
 }
 
+type MCPClientInfo struct {
+	Name    string `json:"name" yaml:"name"`
+	Version string `json:"version" yaml:"version"`
+}
+
+type MCPServerConfig struct {
+	Name          string            `json:"name" yaml:"name"`
+	Description   string            `json:"description" yaml:"description"`
+	URL           string            `json:"url" yaml:"url"`
+	Enabled       bool              `json:"enabled" yaml:"enabled"`
+	Headers       map[string]string `json:"headers" yaml:"headers"`
+	Timeout       durationWrapper   `json:"timeout" yaml:"timeout"`
+	MaxRetries    int               `json:"max_retries" yaml:"max_retries"`
+	RetryInterval durationWrapper   `json:"retry_interval" yaml:"retry_interval"`
+}
+
+type MCPConfig struct {
+	Enable         bool              `json:"enable" yaml:"enable"`
+	ClientInfo     MCPClientInfo     `json:"client_info" yaml:"client_info"`
+	DefaultTimeout durationWrapper   `json:"default_timeout" yaml:"default_timeout"`
+	Servers        []MCPServerConfig `json:"servers" yaml:"servers"`
+}
+
 type MilvusConfig struct {
 	Address        string `json:"address"`
 	Username       string `json:"username"`
@@ -214,7 +237,8 @@ type Config struct {
 		OpenAI         *OpenAI                 `json:"openai"`
 		Nocli          *NocliConfig            `json:"nocli"`
 		Skill          *SkillConfig            `json:"skill"`
-		VectorDB *VectorDBConfig `json:"vector_db"`
+		MCP            *MCPConfig              `json:"mcp"`
+		VectorDB       *VectorDBConfig         `json:"vector_db"`
 		RAG      *RAGConfig      `json:"rag"`
 		Nacos    struct {
 			Addr      string `json:"addr"`

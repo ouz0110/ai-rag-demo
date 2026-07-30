@@ -192,6 +192,8 @@ message CompletionRequest {
   bool enable_rag = 6;
   // 是否启用 Skill 扩展技能 (默认 false / true 可选)
   bool enable_skill = 7;
+  // 是否启用 MCP 工具扩展 (默认 false)
+  bool enable_mcp = 8;
 }
 
 // 恢复执行请求
@@ -216,6 +218,8 @@ message ResumeRequest {
   bool enable_rag = 9;
   // 是否启用 Skill 扩展技能 (默认 false)
   bool enable_skill = 10;
+  // 是否启用 MCP 工具扩展 (默认 false)
+  bool enable_mcp = 11;
 }
 
 // 会话概览信息

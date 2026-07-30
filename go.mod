@@ -42,8 +42,16 @@ require (
 )
 
 require (
+	github.com/mark3labs/mcp-go v0.57.0
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
+)
+
+require (
+	github.com/google/jsonschema-go v0.4.2 // indirect
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
+	github.com/spf13/cast v1.7.1 // indirect
+	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 )
 
 require (

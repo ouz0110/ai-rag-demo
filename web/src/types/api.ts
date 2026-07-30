@@ -159,6 +159,11 @@ export interface CompletionRequest {
   message: string;
   session_id?: string;
   model?: string;
+  kb_tenant_id?: string;
+  kb_id?: string;
+  enable_rag?: boolean;
+  enable_skill?: boolean;
+  enable_mcp?: boolean;
 }
 
 // 恢复执行请求
@@ -169,6 +174,11 @@ export interface ResumeRequest {
   approve_scope: ApproveScope;
   reason?: string;
   model?: string;
+  kb_tenant_id?: string;
+  kb_id?: string;
+  enable_rag?: boolean;
+  enable_skill?: boolean;
+  enable_mcp?: boolean;
 }
 
 // 会话概览信息

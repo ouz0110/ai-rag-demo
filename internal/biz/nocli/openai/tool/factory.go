@@ -1,10 +1,14 @@
 package tool
 
 import (
-	"ai-rag-demo/internal/biz/nocli/vector"
-	"ai-rag-demo/internal/conf"
 	"context"
 	"fmt"
+
+	mcptool "ai-rag-demo/internal/biz/nocli/openai/tool/mcp_tool"
+	"ai-rag-demo/internal/biz/nocli/vector"
+	"ai-rag-demo/internal/conf"
+	"ai-rag-demo/internal/external/mcp"
+	"ai-rag-demo/internal/pkg/skill"
 
 	openai "github.com/sashabaranov/go-openai"
 
@@ -13,7 +17,6 @@ import (
 	ragtool "ai-rag-demo/internal/biz/nocli/openai/tool/rag"
 	readfiles "ai-rag-demo/internal/biz/nocli/openai/tool/read_files"
 	terminaltool "ai-rag-demo/internal/biz/nocli/openai/tool/terminal"
-	"ai-rag-demo/internal/pkg/skill"
 )
 
 type Tool interface {
@@ -26,7 +29,7 @@ type Registry struct {
 	tools map[string]Tool
 }
 
-func NewRegistry(cfg *conf.Config, skillMgr *skill.Manager, engines ...*vector.VectorEngine) *Registry {
+func NewRegistry(cfg *conf.Config, skillMgr *skill.Manager, mcpMgr mcp.Manager, engines ...*vector.VectorEngine) *Registry {
 	var vecEngine *vector.VectorEngine
 	if len(engines) > 0 {
 		vecEngine = engines[0]
@@ -46,6 +49,11 @@ func NewRegistry(cfg *conf.Config, skillMgr *skill.Manager, engines ...*vector.V
 	// 📌 仅当 Skill 全局配置开启时才挂载 load_skill 工具
 	if skillMgr != nil && cfg != nil && cfg.Source.Skill != nil && cfg.Source.Skill.Enable {
 		m[loadskill.ToolName] = loadskill.NewTool(cfg, skillMgr)
+	}
+
+	// 📌 仅当 MCP 全局配置开启且 mcpMgr 不为空时挂载 call_mcp_tool 通用执行工具
+	if mcpMgr != nil && cfg != nil && cfg.Source.MCP != nil && cfg.Source.MCP.Enable {
+		m[mcptool.ToolName] = mcptool.NewTool(cfg, mcpMgr)
 	}
 
 	return &Registry{

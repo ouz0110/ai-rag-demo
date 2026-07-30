@@ -63,6 +63,25 @@ source:
       keep_recent_messages: 6
       max_summary_tokens: 500
       timeout: 30                         # 摘要生成硬超时时间 (单位：秒)
+  skill:
+    enable: true                            # 是否开启 Skill 技能扩展系统全局总开关
+    path: "./workspace/skills"
+  mcp:
+    enable: true                            # 是否开启 MCP 工具扩展系统全局总开关
+    client_info:
+      name: "ai-rag-demo-agent"
+      version: "1.0.0"
+    default_timeout: 30s
+    servers:
+      - name: "weather_mcp"
+        description: "天气查询 MCP 服务"
+        url: "http://localhost:8080/sse"
+        enabled: true
+        headers:
+          Authorization: "Bearer token-demo"
+        timeout: 10s
+        max_retries: 5
+        retry_interval: 2s
   vector_db:
     driver: "milvus"
     milvus:
