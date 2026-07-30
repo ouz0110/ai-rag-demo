@@ -1,6 +1,7 @@
 package list_file
 
 import (
+	"ai-rag-demo/internal/biz/nocli/openai/tool/toolutil"
 	"ai-rag-demo/internal/conf"
 	"context"
 	"encoding/json"
@@ -24,7 +25,7 @@ type Tool struct {
 }
 
 func NewTool(cfg *conf.Config) *Tool {
-	ParseFilters(cfg)
+	toolutil.ParseFilters(cfg)
 	return &Tool{cfg: cfg}
 }
 
@@ -70,7 +71,7 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	}
 	recursive := args.Recursive
 
-	res, err := ResolvePathWithCtx(ctx, t.cfg, path)
+	res, err := toolutil.ResolvePathWithCtx(ctx, t.cfg, path)
 	if err != nil {
 		return "", err
 	}
@@ -111,7 +112,7 @@ func (t *Tool) listFiles(dir, workDir string, maxDepth, currentDepth int, result
 		}
 
 		base := filepath.Base(relPath)
-		if ShouldIgnore(base) {
+		if toolutil.ShouldIgnore(base) {
 			continue
 		}
 
@@ -128,7 +129,7 @@ func (t *Tool) listFiles(dir, workDir string, maxDepth, currentDepth int, result
 				}
 			}
 		} else {
-			if !IsAllowedFile(entry.Name()) {
+			if !toolutil.IsAllowedFile(entry.Name()) {
 				continue
 			}
 			info, err := entry.Info()

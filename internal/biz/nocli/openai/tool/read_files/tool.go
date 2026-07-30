@@ -1,7 +1,6 @@
 package readfiles
 
 import (
-	"ai-rag-demo/internal/conf"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,9 +8,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	openai "github.com/sashabaranov/go-openai"
+	"ai-rag-demo/internal/biz/nocli/openai/tool/toolutil"
+	"ai-rag-demo/internal/conf"
 
-	list_file "ai-rag-demo/internal/biz/nocli/openai/tool/list_files"
+	openai "github.com/sashabaranov/go-openai"
 )
 
 const ToolName = "read_files"
@@ -32,7 +32,7 @@ type Tool struct {
 }
 
 func NewTool(cfg *conf.Config) *Tool {
-	list_file.ParseFilters(cfg)
+	toolutil.ParseFilters(cfg)
 
 	maxReadFiles := cfg.Source.Nocli.MaxReadFiles
 	if maxReadFiles <= 0 {
@@ -141,7 +141,7 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 			break
 		}
 
-		res, err := list_file.ResolvePath(t.cfg, path)
+		res, err := toolutil.ResolvePath(ctx, t.cfg, path)
 		if err != nil {
 			result.WriteString(fmt.Sprintf("--- FILE: %s ---\nERROR: %s\n--- END FILE ---\n\n", path, err))
 			continue

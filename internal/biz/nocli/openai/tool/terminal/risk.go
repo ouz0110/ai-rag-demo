@@ -2,6 +2,8 @@ package terminal
 
 import (
 	"strings"
+
+	"ai-rag-demo/internal/biz/nocli/openai/tool/toolutil"
 )
 
 // SafeCommands 白名单纯查询/只读命令前缀
@@ -22,14 +24,14 @@ var DangerousCommands = []string{
 }
 
 // IsDangerousCommand 评估终端 Shell 指令是否高危（需触发人工审批中断）
-func IsDangerousCommand(workDir, command string) bool {
+func IsDangerousCommand(workDir, command string, allowPath ...[]string) bool {
 	cmd := strings.TrimSpace(strings.ToLower(command))
 	if cmd == "" {
 		return false
 	}
 
 	// 0. 优先检测路径逃逸/越界字符 (如含有超出 workDir 的路径引用)
-	if HasPathEscape(workDir, command) {
+	if toolutil.HasPathEscape(workDir, command, allowPath...) {
 		return true
 	}
 

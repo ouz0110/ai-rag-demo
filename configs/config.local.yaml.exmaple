@@ -115,6 +115,10 @@ source:
     path: "./skills"
   nocli:
     work_dir: "./workspace/agent"
+    allowed_paths:
+      - "./workspace/skills"
+      - "./workspace/knowledges"
+      - "/tmp"
     max_agent_iterations: 15
     max_read_files: 20
     max_total_bytes: 51200

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"ai-rag-demo/internal/biz/nocli/openai/tool/toolutil"
 	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
 
@@ -39,8 +40,12 @@ func (t *Tool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 	}
 
 	baseWorkDir := "./workspace/agent"
-	if t.cfg != nil && t.cfg.Source.Nocli != nil && t.cfg.Source.Nocli.WorkDir != "" {
-		baseWorkDir = t.cfg.Source.Nocli.WorkDir
+	var allowedPaths []string
+	if t.cfg != nil && t.cfg.Source.Nocli != nil {
+		if t.cfg.Source.Nocli.WorkDir != "" {
+			baseWorkDir = t.cfg.Source.Nocli.WorkDir
+		}
+		allowedPaths = t.cfg.Source.Nocli.AllowedPaths
 	}
 
 	workDir, err := common.GetStrictUserAgentWorkDir(ctx, baseWorkDir)
@@ -48,12 +53,12 @@ func (t *Tool) RequiresApproval(ctx context.Context, argsJSON string) bool {
 		return true
 	}
 
-	// 1. 任何企图逃逸工作目录的 cwd 或 command 均属于风险/越界操作，强制触发人工审批
-	if HasPathEscape(workDir, args.Cwd) || HasPathEscape(workDir, args.Command) {
+	// 1. 任何企图逃逸工作目录及白名单路径范围的 cwd 或 command 均属于风险/越界操作，强制触发人工审批
+	if toolutil.HasPathEscape(workDir, args.Cwd, allowedPaths) || toolutil.HasPathEscape(workDir, args.Command, allowedPaths) {
 		return true
 	}
 
-	return IsDangerousCommand(workDir, args.Command)
+	return IsDangerousCommand(workDir, args.Command, allowedPaths)
 }
 
 func (t *Tool) Definition() openai.Tool {
@@ -62,11 +67,11 @@ func (t *Tool) Definition() openai.Tool {
 		"properties": map[string]interface{}{
 			"command": map[string]interface{}{
 				"type":        "string",
-				"description": "要在终端执行的 Shell 命令或脚本调用指令。注意：所有命令及其操作的目标路径必须限制在当前工作目录内部，严禁使用 '..' 或根绝对路径试图跨越逃逸工作目录。",
+				"description": "要在终端 Shell 中执行的命令。支持包含 pipeline、重定向及多条语句组合。",
 			},
 			"cwd": map[string]interface{}{
 				"type":        "string",
-				"description": "执行命令的工作目录，相对于配置的工作目录。留空表示当前工作目录。严禁使用 '..' 或绝对路径逃逸出工作目录。",
+				"description": "命令执行的目标工作子目录（可选，相对于根工作目录。默认在工作目录根节点执行）。",
 			},
 		},
 		"required": []string{"command"},
@@ -76,7 +81,7 @@ func (t *Tool) Definition() openai.Tool {
 		Type: openai.ToolTypeFunction,
 		Function: &openai.FunctionDefinition{
 			Name:        ToolName,
-			Description: "在系统的终端中执行 Shell 命令或脚本调度指令。支持只读探索与工具调用。只读指令自动执行，修改/高危指令需要用户确认。所有命令与路径必须限制在当前工作目录内部，严禁使用 '..' 或绝对路径跨越/逃逸工作目录。",
+			Description: "在系统的 zsh 命令行中为用户提案并执行命令。可以用于创建目录、执行编译指令、文件搜索定位或安全的环境工具调用。",
 			Parameters:  parameters,
 		},
 	}
@@ -85,7 +90,7 @@ func (t *Tool) Definition() openai.Tool {
 func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	var args Args
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("解析 terminal 参数失败: %v", err)
+		return "", fmt.Errorf("参数解析失败: %v", err)
 	}
 
 	command := strings.TrimSpace(args.Command)
@@ -94,8 +99,12 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	}
 
 	baseWorkDir := "./workspace/agent"
-	if t.cfg != nil && t.cfg.Source.Nocli != nil && t.cfg.Source.Nocli.WorkDir != "" {
-		baseWorkDir = t.cfg.Source.Nocli.WorkDir
+	var allowedPaths []string
+	if t.cfg != nil && t.cfg.Source.Nocli != nil {
+		if t.cfg.Source.Nocli.WorkDir != "" {
+			baseWorkDir = t.cfg.Source.Nocli.WorkDir
+		}
+		allowedPaths = t.cfg.Source.Nocli.AllowedPaths
 	}
 
 	cleanWorkDir, err := common.GetStrictUserAgentWorkDir(ctx, baseWorkDir)
@@ -106,16 +115,21 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 	// 1. 校验 cwd 路径边界
 	targetDir := cleanWorkDir
 	if args.Cwd != "" {
-		cleanCwd := filepath.Join(cleanWorkDir, args.Cwd)
+		var cleanCwd string
+		if filepath.IsAbs(args.Cwd) {
+			cleanCwd = filepath.Clean(args.Cwd)
+		} else {
+			cleanCwd = filepath.Clean(filepath.Join(cleanWorkDir, args.Cwd))
+		}
 		absCwd, err := filepath.Abs(cleanCwd)
-		if err != nil || ValidateInWorkDir(absCwd, cleanWorkDir) != nil {
-			return "", fmt.Errorf("禁止跨工作目录路径逃逸: %s", args.Cwd)
+		if err != nil || toolutil.ValidateInWorkDirOrAllowed(absCwd, cleanWorkDir, allowedPaths) != nil {
+			return "", fmt.Errorf("禁止跨工作目录及许可范围外的路径逃逸: %s", args.Cwd)
 		}
 		targetDir = absCwd
 	}
 
 	// 2. 校验 command 中是否包含越界逃逸路径
-	if err := ValidateCommandBoundary(cleanWorkDir, command); err != nil {
+	if err := toolutil.ValidateCommandBoundary(cleanWorkDir, command, allowedPaths); err != nil {
 		return "", fmt.Errorf("禁止跨工作目录路径逃逸: %v", err)
 	}
 

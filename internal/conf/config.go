@@ -96,6 +96,7 @@ type AgentConfig struct {
 
 type NocliConfig struct {
 	WorkDir            string                  `json:"work_dir"`
+	AllowedPaths       []string                `json:"allowed_paths" yaml:"allowed_paths"`
 	IgnoredPaths       []string                `json:"ignored_paths"`
 	AllowedSuffixes    []string                `json:"allowed_suffixes"`
 	MaxReadFiles       int                     `json:"max_read_files"`
