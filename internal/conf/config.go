@@ -72,14 +72,14 @@ type OTel struct {
 }
 
 type OpenAIContextCompressConfig struct {
-	Enable              bool    `json:"enable" yaml:"enable"`                                 // 是否开启上下文压缩
-	MaxContextTokens    int     `json:"max_context_tokens" yaml:"max_context_tokens"`         // 模型最大上下文 Token 数
-	CompressRatio       float64 `json:"compress_ratio" yaml:"compress_ratio"`                 // 触发压缩的比例 (如 0.75)
-	MaxCompressCount    int     `json:"max_compress_count" yaml:"max_compress_count"`         // 单会话最大压缩次数限制
-	MinUncompressedMsgs int     `json:"min_uncompressed_msgs" yaml:"min_uncompressed_msgs"`   // 两次压缩之间必须积累的最小未压缩消息条数
-	KeepRecentMessages  int     `json:"keep_recent_messages" yaml:"keep_recent_messages"`     // 压缩时固定保留的最新消息数
-	MaxSummaryTokens    int     `json:"max_summary_tokens" yaml:"max_summary_tokens"`         // 摘要最大 Token 限制
-	Timeout             int     `json:"timeout" yaml:"timeout"`                               // 摘要生成超时时间 (单位：秒，默认 30)
+	Enable              bool    `json:"enable" yaml:"enable"`                               // 是否开启上下文压缩
+	MaxContextTokens    int     `json:"max_context_tokens" yaml:"max_context_tokens"`       // 模型最大上下文 Token 数
+	CompressRatio       float64 `json:"compress_ratio" yaml:"compress_ratio"`               // 触发压缩的比例 (如 0.75)
+	MaxCompressCount    int     `json:"max_compress_count" yaml:"max_compress_count"`       // 单会话最大压缩次数限制
+	MinUncompressedMsgs int     `json:"min_uncompressed_msgs" yaml:"min_uncompressed_msgs"` // 两次压缩之间必须积累的最小未压缩消息条数
+	KeepRecentMessages  int     `json:"keep_recent_messages" yaml:"keep_recent_messages"`   // 压缩时固定保留的最新消息数
+	MaxSummaryTokens    int     `json:"max_summary_tokens" yaml:"max_summary_tokens"`       // 摘要最大 Token 限制
+	Timeout             int     `json:"timeout" yaml:"timeout"`                             // 摘要生成超时时间 (单位：秒，默认 30)
 }
 
 type OpenAI struct {
@@ -164,12 +164,12 @@ type ChunkerConfig struct {
 }
 
 type RerankConfig struct {
-	Enable  bool   `json:"enable"`   // 是否开启重排
-	Driver  string `json:"driver"`   // llm | bge | cohere
-	APIKey  string `json:"api_key"`  // 独立 Rerank APIKey
-	BaseURL string `json:"base_url"` // 独立 Rerank BaseURL
-	Model   string `json:"model"`    // 重排模型名称 (如 gpt-4o-mini 或 bge-reranker-v2-m3)
-	Timeout int    `json:"timeout"`  // 硬超时时间 (毫秒，默认 1000ms)
+	Enable  bool   `json:"enable" yaml:"enable"`     // 是否开启重排
+	Driver  string `json:"driver" yaml:"driver"`     // llm | qianfan (llm = 大模型对话打分, qianfan = 千帆 Rerank API)
+	APIKey  string `json:"api_key" yaml:"api_key"`   // 独立 Rerank APIKey (qianfan 使用 Bearer Token)
+	BaseURL string `json:"base_url" yaml:"base_url"` // 独立 Rerank BaseURL (qianfan 默认 https://qianfan.baidubce.com)
+	Model   string `json:"model" yaml:"model"`       // 重排模型名称 (qianfan 如 bce-reranker-base, llm 如 gpt-4o-mini)
+	Timeout int    `json:"timeout" yaml:"timeout"`   // 硬超时时间 (毫秒，默认 1000ms)
 }
 
 type ModelPricingConfig struct {
@@ -184,16 +184,16 @@ type BillingConfig struct {
 }
 
 type RAGConfig struct {
-	Enable         bool             `json:"enable" yaml:"enable"`           // 是否开启 RAG 检索全局总开关
-	KnowledgeDir   string           `json:"knowledge_dir" yaml:"knowledge_dir"`   // 默认公共知识库文件目录
-	UploadDir      string           `json:"upload_dir" yaml:"upload_dir"`      // 用户自主上传文件的存储目录
-	AutoReload     bool             `json:"auto_reload" yaml:"auto_reload"`     // 启动时是否自动增量重载知识库
-	TopK           int              `json:"top_k" yaml:"top_k"`           // 默认召回 TopK
+	Enable         bool             `json:"enable" yaml:"enable"`                   // 是否开启 RAG 检索全局总开关
+	KnowledgeDir   string           `json:"knowledge_dir" yaml:"knowledge_dir"`     // 默认公共知识库文件目录
+	UploadDir      string           `json:"upload_dir" yaml:"upload_dir"`           // 用户自主上传文件的存储目录
+	AutoReload     bool             `json:"auto_reload" yaml:"auto_reload"`         // 启动时是否自动增量重载知识库
+	TopK           int              `json:"top_k" yaml:"top_k"`                     // 默认召回 TopK
 	ScoreThreshold float32          `json:"score_threshold" yaml:"score_threshold"` // 默认相似度得分阈值
-	Embedding      *EmbeddingConfig `json:"embedding" yaml:"embedding"`       // 独立 Embedding AI 配置
-	Chunker        *ChunkerConfig   `json:"chunker" yaml:"chunker"`         // 细粒度切片配置
-	Rerank         *RerankConfig    `json:"rerank" yaml:"rerank"`          // 独立 Rerank 重排配置
-	Billing        *BillingConfig   `json:"billing" yaml:"billing"`         // 计费配置
+	Embedding      *EmbeddingConfig `json:"embedding" yaml:"embedding"`             // 独立 Embedding AI 配置
+	Chunker        *ChunkerConfig   `json:"chunker" yaml:"chunker"`                 // 细粒度切片配置
+	Rerank         *RerankConfig    `json:"rerank" yaml:"rerank"`                   // 独立 Rerank 重排配置
+	Billing        *BillingConfig   `json:"billing" yaml:"billing"`                 // 计费配置
 }
 
 type Config struct {
@@ -239,8 +239,8 @@ type Config struct {
 		Skill          *SkillConfig            `json:"skill"`
 		MCP            *MCPConfig              `json:"mcp"`
 		VectorDB       *VectorDBConfig         `json:"vector_db"`
-		RAG      *RAGConfig      `json:"rag"`
-		Nacos    struct {
+		RAG            *RAGConfig              `json:"rag"`
+		Nacos          struct {
 			Addr      string `json:"addr"`
 			Port      string `json:"port"`
 			Username  string `json:"username"`

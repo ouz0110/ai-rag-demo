@@ -162,7 +162,7 @@ func (e *Embedder) callOpenAIEmbeddingWithRetry(ctx context.Context, texts []str
 
 		req := openai.EmbeddingRequest{
 			Input: texts,
-			Model: e.model,
+			Model: openai.EmbeddingModel(e.model),
 		}
 
 		resp, err := e.client.CreateEmbeddings(ctx, req)
