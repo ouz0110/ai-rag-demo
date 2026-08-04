@@ -8,6 +8,8 @@ RUN go env -w GOPROXY=https://goproxy.cn,direct &&\
 
 FROM debian:12
 
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /src/bin /app
 COPY --from=builder /src/configs/config.yaml  /app/configs/config.yaml
 

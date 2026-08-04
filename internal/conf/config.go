@@ -138,6 +138,8 @@ type MilvusConfig struct {
 	Address        string `json:"address"`
 	Username       string `json:"username"`
 	Password       string `json:"password"`
+	APIKey         string `json:"api_key"`
+	Token          string `json:"token"`
 	DBName         string `json:"db_name"`
 	CollectionName string `json:"collection_name"`
 	Dimension      int    `json:"dimension"`

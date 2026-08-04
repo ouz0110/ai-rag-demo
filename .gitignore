@@ -13,3 +13,5 @@ bin/
 cmd/server/log
 log/
 workspace/
+build
+api-rag-demo-server

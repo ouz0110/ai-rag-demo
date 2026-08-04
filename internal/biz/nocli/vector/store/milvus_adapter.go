@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/log"
@@ -24,18 +25,26 @@ func newMilvusAdapter(cfg *conf.MilvusConfig) (VectorStore, error) {
 		return nil, fmt.Errorf("milvus configuration is empty or address is missing")
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	apiKey := cfg.APIKey
+	if apiKey == "" {
+		apiKey = cfg.Token
+	}
+
 	cli, err := milvusclient.NewClient(ctx, milvusclient.Config{
 		Address:  cfg.Address,
 		Username: cfg.Username,
 		Password: cfg.Password,
+		APIKey:   apiKey,
 		DBName:   cfg.DBName,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect milvus server: %w", err)
 	}
 
-	log.Infof(ctx, "Milvus client connected successfully to %s", cfg.Address)
+	log.Infof(context.Background(), "Milvus client connected successfully to %s", cfg.Address)
 	return &milvusAdapter{
 		cli: cli,
 		cfg: cfg,

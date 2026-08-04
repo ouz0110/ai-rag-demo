@@ -116,6 +116,38 @@ services:
     depends_on:
       - standalone
 
+  app:
+    container_name: api-rag-demo-server
+    image: debian:12-slim
+    restart: always
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./api-rag-demo-server:/app/api-rag-demo-server
+      - ./configs:/app/configs
+      - ./third_data/log:/app/log
+      - ./workspace:/app/workspace
+    working_dir: /app
+    command: sh -c "apt-get update && apt-get install -y ca-certificates && chmod +x ./api-rag-demo-server && exec ./api-rag-demo-server -conf=configs/config.local.yaml"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+
+  nginx:
+    container_name: nginx
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./configs/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - app
+
 networks:
   default:
     name: milvus
+

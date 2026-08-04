@@ -29,6 +29,20 @@ build:
 	go mod tidy
 	mkdir -p bin/ && go build -trimpath -ldflags "-s -w -X 'main.Version=$(VERSION)' -X 'main.Revision=$(GIT_COMMIT_HASH)' -X 'main.BuildTime=$(BUILD_TIME)'" -o ./bin/server ./cmd/server/
 
+.PHONY: pack
+# build linux binary, frontend, copy configs and docker-compose to build/api-rag-demo
+pack:
+	go mod tidy
+	rm -rf build/api-rag-demo
+	mkdir -p build/api-rag-demo/web
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w -X 'main.Version=$(VERSION)' -X 'main.Revision=$(GIT_COMMIT_HASH)' -X 'main.BuildTime=$(BUILD_TIME)'" -o ./build/api-rag-demo/api-rag-demo-server ./cmd/server/
+	cp -r configs ./build/api-rag-demo/
+	sed -i.bak -e 's/localhost:6379/redis:6379/g' -e 's/localhost:3306/mysql:3306/g' -e 's/localhost:19530/standalone:19530/g' ./build/api-rag-demo/configs/config.local.yaml && rm -f ./build/api-rag-demo/configs/config.local.yaml.bak
+	cd web && npm run build
+	cp -r web/dist/* ./build/api-rag-demo/web/
+	cp docker-compose.yml ./build/api-rag-demo/
+
+
 .PHONY: generate
 # generate
 generate:

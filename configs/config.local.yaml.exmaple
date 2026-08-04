@@ -86,6 +86,10 @@ source:
     driver: "milvus"
     milvus:
       address: "localhost:19530"
+      username: ""
+      password: ""
+      token: ""
+      api_key: ""
       db_name: "default"
       collection_name: "rag_knowledge"
       dimension: 1024
