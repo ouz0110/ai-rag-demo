@@ -10,6 +10,20 @@
       </div>
 
       <h1 class="welcome-title">AI-RAG-DEMO</h1>
+
+      <!-- 开源项目地址 显目标签 -->
+      <a
+        href="https://github.com/ouz0110/ai-rag-demo"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="github-hero-badge"
+        title="点击前往 GitHub 开源项目"
+      >
+        <Github :size="16" class="text-indigo-400" />
+        <span class="badge-text">开源项目地址: <strong class="underline decoration-indigo-500/50">github.com/ouz0110/ai-rag-demo</strong></span>
+        <ExternalLink :size="13" class="badge-ext" />
+      </a>
+
       <p class="welcome-desc">
         大模型 CoT 深度推理 · 流式打字机响应 · RAG 知识库检索 · 敏感 Tool 人工中断授权审批
       </p>
@@ -39,7 +53,7 @@
 </template>
 
 <script setup lang="ts">
-import { Bot, Code2, Cpu, FileSearch, HelpCircle } from 'lucide-vue-next';
+import { Bot, Code2, Cpu, FileSearch, HelpCircle, Github, ExternalLink } from 'lucide-vue-next';
 import ChatInput from '../components/chat/ChatInput.vue';
 import { useChatStore } from '../stores/chat';
 
@@ -133,6 +147,45 @@ function selectPrompt(content: string) {
   color: #f8fafc;
   letter-spacing: -0.02em;
   margin-bottom: 0.5rem;
+}
+
+.github-hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  margin-bottom: 1.25rem;
+  background: rgba(99, 102, 241, 0.12);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: 9999px;
+  color: #c7d2fe;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  text-decoration: none;
+  backdrop-filter: blur(8px);
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+}
+
+.github-hero-badge:hover {
+  background: rgba(99, 102, 241, 0.25);
+  border-color: rgba(129, 140, 248, 0.7);
+  color: #ffffff;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.35);
+}
+
+.github-hero-badge .badge-text {
+  font-family: inherit;
+}
+
+.github-hero-badge .badge-ext {
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.github-hero-badge:hover .badge-ext {
+  opacity: 1;
 }
 
 .welcome-desc {

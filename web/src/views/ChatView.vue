@@ -9,7 +9,17 @@
       </div>
 
       <div class="header-right font-mono">
-        <span>AI-RAG Streaming Console</span>
+        <a
+          href="https://github.com/ouz0110/ai-rag-demo"
+          target="_blank"
+          rel="noopener noreferrer"
+          class="header-github-link"
+          title="访问 GitHub 开源项目"
+        >
+          <Github :size="14" />
+          <span>github.com/ouz0110/ai-rag-demo</span>
+          <ExternalLink :size="12" />
+        </a>
       </div>
     </header>
 
@@ -60,7 +70,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { Loader2 } from 'lucide-vue-next';
+import { Loader2, Github, ExternalLink } from 'lucide-vue-next';
 import ChatMessage from '../components/chat/ChatMessage.vue';
 import InterruptCard from '../components/chat/InterruptCard.vue';
 import ChatInput from '../components/chat/ChatInput.vue';
@@ -293,6 +303,28 @@ function handleApprovalRespond(payload: {
 .header-right {
   font-size: 0.75rem;
   color: #64748b;
+  display: flex;
+  align-items: center;
+}
+
+.header-github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: #94a3b8;
+  font-size: 0.725rem;
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.header-github-link:hover {
+  background: rgba(99, 102, 241, 0.18);
+  border-color: rgba(99, 102, 241, 0.4);
+  color: #a5b4fc;
 }
 
 .message-scroll-area {

@@ -12,6 +12,21 @@
         </div>
       </div>
 
+      <!-- 开源项目 GitHub 链接 -->
+      <a
+        href="https://github.com/ouz0110/ai-rag-demo"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="github-repo-btn"
+        title="访问 GitHub 开源项目"
+      >
+        <div class="flex items-center gap-1.5 overflow-hidden">
+          <Github :size="15" class="flex-shrink-0 text-indigo-400" />
+          <span class="repo-url">github.com/ouz0110/ai-rag-demo</span>
+        </div>
+        <ExternalLink :size="12" class="ext-icon flex-shrink-0" />
+      </a>
+
       <div class="flex flex-col gap-2">
         <button @click="createNewChat" class="new-chat-btn">
           <Plus :size="16" />
@@ -100,7 +115,7 @@
 <script setup lang="ts">
 import { computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
-import { Bot, Plus, MessageSquare, Trash2, LogOut, Loader2, Database, CreditCard } from 'lucide-vue-next';
+import { Bot, Plus, MessageSquare, Trash2, LogOut, Loader2, Database, CreditCard, Github, ExternalLink } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat';
 import { useUserStore } from '../../stores/user';
 import { SessionStatus } from '../../types/api';
@@ -218,6 +233,49 @@ async function handleLogout() {
   color: #64748b;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+}
+
+.github-repo-btn {
+  width: 100%;
+  height: 36px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+  box-sizing: border-box;
+}
+
+.github-repo-btn:hover {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(6, 182, 212, 0.25));
+  border-color: rgba(129, 140, 248, 0.5);
+  color: #ffffff;
+  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.25);
+  transform: translateY(-1px);
+}
+
+.github-repo-btn .repo-url {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: monospace;
+  font-size: 0.7rem;
+}
+
+.github-repo-btn .ext-icon {
+  opacity: 0.6;
+}
+
+.github-repo-btn:hover .ext-icon {
+  opacity: 1;
 }
 
 .new-chat-btn {

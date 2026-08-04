@@ -1,0 +1,53 @@
+services:
+  redis:
+    container_name: redis7
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    command: redis-server /etc/redis/redis.conf
+    volumes:
+      - ./configs/redis/redis.conf:/etc/redis/redis.conf:ro
+      - ./third_data/redis/data:/data
+      - ./third_data/redis/logs:/var/log/redis
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  mysql:
+    container_name: mysql8
+    image: mysql:8.0
+    restart: always
+    ports:
+      - "3306:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: "123456"
+    command: --default-authentication-plugin=mysql_native_password
+    volumes:
+      - ./third_data/mysql/data:/var/lib/mysql
+      - ./third_data/mysql/logs:/var/log/mysql
+      - ./configs/mysql/my.cnf:/etc/mysql/conf.d/my.cnf:ro
+    healthcheck:
+      test: [ "CMD", "mysqladmin", "-u", "root", "-p123456", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  nginx:
+    container_name: nginx
+    image: nginx:alpine
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./web:/usr/share/nginx/html:ro
+      - ./configs/nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
