@@ -1,15 +1,15 @@
-secret: your-secret-key-placeholder
-name: ai_rag_demo_api
+secret: 87S7yST0Bx249iSqxUhzR
+name: demo_api
 env: local
 version: v1.0.0
 i18n:
   default: zh-hans-cn
-  config_group: AI_RAG_DEMO_API_GROUP
+  config_group: DEMO_API_GROUP
   config:
     - active.zh-cn.toml
 service:
 server:
-  domain: ${SRV_DOMAIN:https://dev.example.com/demo/api}
+  domain: ${SRV_DOMAIN:https://dev.demo.com/demo/api}
   http:
     addr: 0.0.0.0:8001
     timeout: 300s
@@ -20,6 +20,7 @@ server:
 source:
   log:
     level: debug
+    
   aes_ecb:
     code: "0123456789012345"
   otel:
@@ -43,7 +44,7 @@ source:
       max_open_conns: 200
       max_lifetime: 600
   nacos:
-    addr: nacos-dev.example.com
+    addr: nacos-dev.demo.com
     port: "80"
     access_key_id:
     access_key_secret:
@@ -51,34 +52,33 @@ source:
     log:
       level: debug
   openai:
-    api_key: "sk-your-openai-api-key-placeholder"
-    base_url: "https://api.openai.com/v1"
-    model: "gpt-4o"
+    api_key: "xxx"
+    base_url: "https://api.deepseek.com"
+    model: "deepseek-v3.2"
     context_compress:
       enable: true
-      max_context_tokens: 128000
+      max_context_tokens: 8098
       compress_ratio: 0.75
-      max_compress_count: 5
-      min_uncompressed_msgs: 6
-      keep_recent_messages: 6
+      max_compress_count: 2
+      min_uncompressed_msgs: 2
+      keep_recent_messages: 2
       max_summary_tokens: 500
-      timeout: 30                         # 摘要生成硬超时时间 (单位：秒)
+      timeout: 300                         # 摘要生成硬超时时间 (单位：秒)
   skill:
     enable: true                            # 是否开启 Skill 技能扩展系统全局总开关
     path: "./workspace/skills"
   mcp:
-    enable: true                            # 是否开启 MCP 工具扩展系统全局总开关
+    enable: false                            # 是否开启 MCP 工具扩展系统全局总开关
     client_info:
       name: "ai-rag-demo-agent"
       version: "1.0.0"
     default_timeout: 30s
     servers:
-      - name: "weather_mcp"
-        description: "天气查询 MCP 服务"
-        url: "http://localhost:8080/sse"
+      - name: "08demo"
+        description: "08demo每日用量统计"
+        url: "http://localhost:8081/sse"
         enabled: true
         headers:
-          Authorization: "Bearer token-demo"
         timeout: 10s
         max_retries: 5
         retry_interval: 2s
@@ -88,38 +88,38 @@ source:
       address: "localhost:19530"
       db_name: "default"
       collection_name: "rag_knowledge"
-      dimension: 1536
+      dimension: 1024
   rag:
-    enable: true                            # 是否开启 RAG 知识库检索全局总开关
-    knowledge_dir: "./workspace/knowledge"
+    enable: true 
+    knowledge_dir: "./workspace/knowledges"
     upload_dir: "./workspace/uploads"
     auto_reload: true
     top_k: 5
     score_threshold: 0.6
     embedding:
       api_key: "ollama"
-      base_url: "http://localhost:11434/v1" # Ollama 本地 API 地址
-      model: "bge-m3"                       # Ollama 向量模型
-      dimension: 1024                       # 向量维度配置 (如 1024, 1536, 768)
+      base_url: "http://localhost:8091/v1" # Ollama 本地 Embedding API 接口地址
+      model: "Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0"           # Ollama 中加载的向量模型 (如 bge-m3 / nomic-embed-text)
+      dimension: 1024                       # 向量维度 (通过配置灵活传入，如 1024 / 1536 / 768)
     rerank:
       enable: true
-      driver: "llm"                         # 使用 OpenAI 兼容模式直连 Ollama 重排服务
+      driver: "qianfan" # 使用 OpenAI 兼容模式直连 Ollama 本地重排/打分服务
       api_key: "ollama"
-      base_url: "http://localhost:11434/v1" # Ollama 本地 API 地址
-      model: "bge-reranker-large"           # Ollama 挂载的模型
-      timeout: 2000                         # 重排超时 (2000ms)
+      base_url: "http://localhost:8090/v1/rerank" # Ollama 本地服务接口地址
+      model: "gpustack/bge-reranker-v2-m3-GGUF:Q8_0"           # Ollama 中加载的重排模型名称
+      timeout: 2000                         # 重排硬超时 (2000ms)
     billing:
       enable: true
       default_prices:
-        "gpt-4o":
+        "deepseek-v3.2":
           input_unit_price: 0.2
           output_unit_price: 0.8
           unit_size: 1000
-        "bge-m3":
+        "Qwen/Qwen3-Embedding-0.6B-GGUF:Q8_0":
           input_unit_price: 0.5
           output_unit_price: 0.6
           unit_size: 1000
-        "bge-reranker-large":
+        "gpustack/bge-reranker-v2-m3-GGUF:Q8_0":
           input_unit_price: 0.1
           output_unit_price: 0.5
           unit_size: 1000
@@ -129,16 +129,12 @@ source:
       overlap: 30
       merge_threshold: 0.75
       split_threshold: 0.45
-  skill:
-    enable: true                            # 是否开启 Skill 技能扩展系统全局总开关
-    path: "./skills"
   nocli:
     work_dir: "./workspace/agent"
     allowed_paths:
       - "./workspace/skills"
       - "./workspace/knowledges"
       - "/tmp"
-    max_agent_iterations: 15
     max_read_files: 20
     max_total_bytes: 51200
     chunk_lines: 1000
@@ -162,3 +158,4 @@ source:
       - ".sql"
       - ".sh"
 external:
+
