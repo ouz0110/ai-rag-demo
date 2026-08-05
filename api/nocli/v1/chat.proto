@@ -116,6 +116,7 @@ message PendingToolCall {
   string tool_call_id = 2;
   string tool_name = 3;
   string arguments = 4;
+  string agent_name = 5;
 }
 
 // 流式工具执行信息
@@ -124,6 +125,7 @@ message StreamToolInfo {
   string tool_name = 2;
   string arguments = 3;
   string result_preview = 4;
+  int64 duration_ms = 5;
 }
 
 // 流式错误信息
@@ -174,6 +176,18 @@ message StreamChunk {
   string role = 10;
   // 压缩事件详情 (event == SET_CONTEXT_COMPRESSED)
   CompressInfo compress_info = 11;
+  // 耗时 (毫秒)
+  int64 duration_ms = 12;
+}
+
+// 子 Agent 工具调度选项配置
+message AgentToolOptions {
+  // 父 -> 子：是否将父 Agent 的完整历史消息透传给子 Agent（默认 false）
+  bool pass_full_context_to_sub_agent = 1;
+  // 子 -> 父：是否将子 Agent 内部多轮执行历史追加回父 Agent（默认 false）
+  bool return_full_context_to_parent = 2;
+  // 是否将子 Agent 的中间执行过程流式推送给用户（默认 true）
+  bool stream_sub_agent_execution = 3;
 }
 
 // 补全请求
@@ -194,6 +208,10 @@ message CompletionRequest {
   bool enable_skill = 7;
   // 是否启用 MCP 工具扩展 (默认 false)
   bool enable_mcp = 8;
+  // 是否启用 Rerank 结果重排 (默认 false)
+  bool enable_rerank = 9;
+  // 子 Agent 调度工具控制选项
+  AgentToolOptions agent_tool_options = 10;
 }
 
 // 恢复执行请求
@@ -220,6 +238,10 @@ message ResumeRequest {
   bool enable_skill = 10;
   // 是否启用 MCP 工具扩展 (默认 false)
   bool enable_mcp = 11;
+  // 是否启用 Rerank 结果重排 (默认 false)
+  bool enable_rerank = 12;
+  // 子 Agent 调度工具控制选项
+  AgentToolOptions agent_tool_options = 13;
 }
 
 // 会话概览信息

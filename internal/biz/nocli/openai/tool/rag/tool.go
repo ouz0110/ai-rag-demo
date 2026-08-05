@@ -18,16 +18,18 @@ const (
 	parentKBTenantIDKey    = "parent_kb_tenant_id"
 	parentKBIDKey          = "parent_kb_id"
 	parentEnableRAGKey     = "parent_enable_rag"
+	parentEnableRerankKey  = "parent_enable_rerank"
 	parentKBNameKey        = "parent_kb_name"
 	parentKBDescriptionKey = "parent_kb_description"
 )
 
 type Args struct {
-	Query      string `json:"query"`       // 用户输入的原始或模糊查询/文档提问
-	TenantID   string `json:"tenant_id"`   // 租户 ID，若为空则自动读取会话上下文中的租户，默认 default_tenant
-	KBID       string `json:"kb_id"`       // 知识库 ID，若为空则自动读取会话上下文中的知识库，默认 kb_default_system
-	TopK       int    `json:"top_k"`       // 召回结果数量，默认 5
-	OnlyActive bool   `json:"only_active"` // 是否仅检索当前生效文档切片，默认 true
+	Query        string `json:"query"`                  // 用户输入的原始或模糊查询/文档提问
+	TenantID     string `json:"tenant_id"`              // 租户 ID，若为空则自动读取会话上下文中的租户，默认 default_tenant
+	KBID         string `json:"kb_id"`                  // 知识库 ID，若为空则自动读取会话上下文中的知识库，默认 kb_default_system
+	TopK         int    `json:"top_k"`                  // 召回结果数量，默认 5
+	OnlyActive   bool   `json:"only_active"`            // 是否仅检索当前生效文档切片，默认 true
+	EnableRerank *bool  `json:"enable_rerank,omitempty"` // 是否启用 Rerank 二次精排
 }
 
 type Tool struct {
@@ -131,13 +133,21 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 		return fmt.Sprintf("RAG 搜索引擎未初始化。原始查询: '%s'，已转换为标准问题: %v", rawQuery, standardQueries), nil
 	}
 
+	enableRerank := false
+	if ctxVal, ok := ctx.Value(parentEnableRerankKey).(bool); ok {
+		enableRerank = ctxVal
+	}
+	if args.EnableRerank != nil {
+		enableRerank = *args.EnableRerank
+	}
+
 	// 2. 依次用主标准问题及相关扩展问题检索向量库
 	primaryQuery := standardQueries[0]
-	ragContexts, err := t.vectorEngine.RetrieveContext(ctx, tenantID, primaryQuery, topK)
+	ragContexts, err := t.vectorEngine.RetrieveContext(ctx, tenantID, primaryQuery, topK, enableRerank)
 	if err != nil {
 		// 备用检索：若主标准问题检索异常，使用原始 Query 尝试降级检索
 		var fallbackErr error
-		ragContexts, fallbackErr = t.vectorEngine.RetrieveContext(ctx, tenantID, rawQuery, topK)
+		ragContexts, fallbackErr = t.vectorEngine.RetrieveContext(ctx, tenantID, rawQuery, topK, enableRerank)
 		if fallbackErr != nil {
 			return "", fmt.Errorf("RAG 检索执行失败: %v", err)
 		}

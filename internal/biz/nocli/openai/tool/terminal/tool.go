@@ -133,8 +133,11 @@ func (t *Tool) Run(ctx context.Context, argsJSON string) (string, error) {
 		return "", fmt.Errorf("禁止跨工作目录路径逃逸: %v", err)
 	}
 
-	// 5 分钟安全超时
-	execCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	execTimeout := 5 * time.Minute
+	if t.cfg != nil && t.cfg.Source.Nocli != nil && t.cfg.Source.Nocli.ExecTimeout.Duration > 0 {
+		execTimeout = t.cfg.Source.Nocli.ExecTimeout.Duration
+	}
+	execCtx, cancel := context.WithTimeout(ctx, execTimeout)
 	defer cancel()
 
 	var cmd *exec.Cmd

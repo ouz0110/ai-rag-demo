@@ -61,6 +61,12 @@ function normalizeKB(kb: any): KnowledgeBase {
   };
 }
 
+export interface AgentToolOptions {
+  pass_full_context_to_sub_agent: boolean;
+  return_full_context_to_parent: boolean;
+  stream_sub_agent_execution: boolean;
+}
+
 export const useKBStore = defineStore('kb', () => {
   const kbs = ref<KnowledgeBase[]>([]);
   const documents = ref<KnowledgeDocument[]>([]);
@@ -69,6 +75,12 @@ export const useKBStore = defineStore('kb', () => {
   const enableRAG = ref<boolean>(false); // 默认关闭 RAG 开关！只有用户明确开启才允许触发 RAG 检索
   const enableSkill = ref<boolean>(true); // 默认开启 Skill 开关！
   const enableMCP = ref<boolean>(true); // 默认开启 MCP 开关！
+  const enableRerank = ref<boolean>(true); // 默认开启 Rerank 重排开关！
+  const agentToolOptions = ref<AgentToolOptions>({
+    pass_full_context_to_sub_agent: false,
+    return_full_context_to_parent: false,
+    stream_sub_agent_execution: true,
+  });
   const loading = ref<boolean>(false);
   const docLoading = ref<boolean>(false);
   const uploading = ref<boolean>(false);
@@ -84,6 +96,10 @@ export const useKBStore = defineStore('kb', () => {
 
   function toggleMCP() {
     enableMCP.value = !enableMCP.value;
+  }
+
+  function toggleRerank() {
+    enableRerank.value = !enableRerank.value;
   }
 
   // 获取默认知识库
@@ -250,6 +266,8 @@ export const useKBStore = defineStore('kb', () => {
     enableRAG,
     enableSkill,
     enableMCP,
+    enableRerank,
+    agentToolOptions,
     loading,
     docLoading,
     uploading,
@@ -267,5 +285,6 @@ export const useKBStore = defineStore('kb', () => {
     toggleRAG,
     toggleSkill,
     toggleMCP,
+    toggleRerank,
   };
 });

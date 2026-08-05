@@ -18,6 +18,7 @@ type LoopResult struct {
 	Status           pb.SessionStatus
 	PendingToolCalls []*pb.PendingToolCall
 	NewCheckpointMsg *openai.ChatCompletionMessage
+	ToolDurations    map[string]int64
 }
 
 type ProcessToolCallsResult struct {
@@ -26,6 +27,7 @@ type ProcessToolCallsResult struct {
 	PendingInterrupt *dataBase.NocliInterruptModel
 	PendingToolCall  *pb.PendingToolCall
 	ExecutedMsgs     []openai.ChatCompletionMessage
+	ToolDurations    map[string]int64
 }
 
 // MessageFetcher 获取 LLM Assistant 消息的策略闭包

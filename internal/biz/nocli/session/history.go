@@ -14,6 +14,12 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+// StoredChatMessage 封装包含耗时等扩展元数据的落盘消息数据结构 (兼容量纲与重放还原)
+type StoredChatMessage struct {
+	openai.ChatCompletionMessage
+	DurationMs int64 `json:"duration_ms,omitempty"`
+}
+
 // LoadHistory 加载该会话在数据库中的完整历史消息集合 (客户端全量呈现使用)
 func (m *SessionManager) LoadHistory(ctx context.Context, sessionID string) ([]openai.ChatCompletionMessage, error) {
 	models, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
@@ -34,55 +40,81 @@ func (m *SessionManager) LoadHistory(ctx context.Context, sessionID string) ([]o
 	return messages, nil
 }
 
-// LoadHistoryForLLM 为 LLM 运行时精准加载【首部初始 System + 最新 Checkpoint 摘要 + 增量消息】
+// LoadHistoryForLLM 为 LLM 运行时精准加载【首部初始 System + 最新 Checkpoint 摘要 + 增量消息】，并排除子 Agent 内部细节消息
 func (m *SessionManager) LoadHistoryForLLM(ctx context.Context, sessionID string) ([]openai.ChatCompletionMessage, error) {
 	sess, ok, err := m.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID)
 	if err != nil || !ok {
 		return nil, fmt.Errorf("会话不存在: %s", sessionID)
 	}
 
+	var rawMsgs []openai.ChatCompletionMessage
+
 	// 1. 若未发生过 Checkpoint 压缩，直接加载全量历史
 	if sess.LastCheckpointMsgID == 0 {
-		return m.LoadHistory(ctx, sessionID)
+		var err error
+		rawMsgs, err = m.LoadHistory(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// 2. 加载首部初始 System 消息群 (开头连续的 system 消息)
+		allModels, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
+		if err != nil {
+			return nil, err
+		}
+
+		initialSysMsgs := make([]openai.ChatCompletionMessage, 0)
+		for _, model := range allModels {
+			var msg openai.ChatCompletionMessage
+			if err := json.Unmarshal([]byte(model.Msg), &msg); err != nil {
+				continue
+			}
+			if msg.Role == openai.ChatMessageRoleSystem {
+				initialSysMsgs = append(initialSysMsgs, msg)
+			} else {
+				break
+			}
+		}
+
+		// 3. 从 ID >= LastCheckpointMsgID 检索最新 Checkpoint 及其后续增量消息
+		incModels, err := m.allDb.Base.NocliMessageRepo.GetMessagesFromID(ctx, sessionID, sess.LastCheckpointMsgID)
+		if err != nil {
+			return nil, err
+		}
+
+		rawMsgs = make([]openai.ChatCompletionMessage, 0, len(initialSysMsgs)+len(incModels))
+		rawMsgs = append(rawMsgs, initialSysMsgs...)
+
+		for _, model := range incModels {
+			var msg openai.ChatCompletionMessage
+			if err := json.Unmarshal([]byte(model.Msg), &msg); err != nil {
+				continue
+			}
+			rawMsgs = append(rawMsgs, msg)
+		}
 	}
 
-	// 2. 加载首部初始 System 消息群 (开头连续的 system 消息)
-	allModels, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(ctx, sessionID)
-	if err != nil {
-		return nil, err
+	// 🎯 关键步骤：过滤子 Agent 内部细节消息 (仅留 Web 端回放展示，主 Agent LLM 运行时完全剔除)
+	return FilterSubAgentMessagesForLLM(rawMsgs), nil
+}
+
+// FilterSubAgentMessagesForLLM 过滤掉为 Web 展示保存的子 Agent 内部多轮细节消息 (如 read_files/list_files)
+// 保证 LLM 运行时接收到的历史上下文极简、无 Token 冲爆隐患，且仅包含主 Agent 的委派指令与总结 ToolResult。
+func FilterSubAgentMessagesForLLM(msgs []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
+	if len(msgs) == 0 {
+		return nil
 	}
 
-	initialSysMsgs := make([]openai.ChatCompletionMessage, 0)
-	for _, model := range allModels {
-		var msg openai.ChatCompletionMessage
-		if err := json.Unmarshal([]byte(model.Msg), &msg); err != nil {
+	filtered := make([]openai.ChatCompletionMessage, 0, len(msgs))
+	for _, m := range msgs {
+		// 如果消息明确标记为子 Agent 的 Name (如 "file_analyzer", "rag_agent" 等且非 "main")，在发给 LLM 时予以排除
+		if m.Name != "" && m.Name != "main" {
 			continue
 		}
-		if msg.Role == openai.ChatMessageRoleSystem {
-			initialSysMsgs = append(initialSysMsgs, msg)
-		} else {
-			break
-		}
+		filtered = append(filtered, m)
 	}
 
-	// 3. 从 ID >= LastCheckpointMsgID 检索最新 Checkpoint 及其后续增量消息
-	incModels, err := m.allDb.Base.NocliMessageRepo.GetMessagesFromID(ctx, sessionID, sess.LastCheckpointMsgID)
-	if err != nil {
-		return nil, err
-	}
-
-	llmMessages := make([]openai.ChatCompletionMessage, 0, len(initialSysMsgs)+len(incModels))
-	llmMessages = append(llmMessages, initialSysMsgs...)
-
-	for _, model := range incModels {
-		var msg openai.ChatCompletionMessage
-		if err := json.Unmarshal([]byte(model.Msg), &msg); err != nil {
-			continue
-		}
-		llmMessages = append(llmMessages, msg)
-	}
-
-	return llmMessages, nil
+	return filtered
 }
 
 // PrepareMessagesForCompletion 为 Completion 准备消息：处理过期中断、追加用户新消息并清洗未决 ToolCalls
@@ -144,8 +176,8 @@ func (m *SessionManager) CancelPendingInterrupts(ctx context.Context, sessionID 
 	return cancelMsgs, nil
 }
 
-// SaveHistory 增量批量落盘保存产生的新消息列表
-func (m *SessionManager) SaveHistory(ctx context.Context, sessionID string, msgs []openai.ChatCompletionMessage) error {
+// SaveHistory 增量批量落盘保存产生的新消息列表 (支持关联耗时数据扩展落盘，保障回放与重放还原)
+func (m *SessionManager) SaveHistory(ctx context.Context, sessionID string, msgs []openai.ChatCompletionMessage, toolDurations map[string]int64) error {
 	if len(msgs) == 0 {
 		return nil
 	}
@@ -154,7 +186,22 @@ func (m *SessionManager) SaveHistory(ctx context.Context, sessionID string, msgs
 	models := make([]*dataBase.NocliMessageModel, 0, len(msgs))
 
 	for _, msg := range msgs {
-		bytes, err := json.Marshal(msg)
+		var bytes []byte
+		var err error
+
+		if msg.ToolCallID != "" && toolDurations != nil {
+			if dur, ok := toolDurations[msg.ToolCallID]; ok && dur > 0 {
+				bytes, err = json.Marshal(StoredChatMessage{
+					ChatCompletionMessage: msg,
+					DurationMs:            dur,
+				})
+			}
+		}
+
+		if len(bytes) == 0 {
+			bytes, err = json.Marshal(msg)
+		}
+
 		if err != nil {
 			return fmt.Errorf("序列化消息失败: %v", err)
 		}

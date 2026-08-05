@@ -65,10 +65,11 @@ type RedisConfig struct {
 }
 
 type OTel struct {
-	Enable     bool    `json:"enable"`
-	Endpoint   string  `yaml:"endpoint"`
-	SampleRate float32 `yaml:"sample_rate"`
-	StdOut     bool    `yaml:"std_out"`
+	Enable     bool            `json:"enable"`
+	Endpoint   string          `yaml:"endpoint"`
+	SampleRate float32         `yaml:"sample_rate"`
+	StdOut     bool            `yaml:"std_out"`
+	Timeout    durationWrapper `json:"timeout" yaml:"timeout"`
 }
 
 type OpenAIContextCompressConfig struct {
@@ -104,6 +105,7 @@ type NocliConfig struct {
 	ChunkLines         int                     `json:"chunk_lines"`
 	MaxAgentIterations int                     `json:"max_agent_iterations"`
 	Agents             map[string]*AgentConfig `json:"agents"`
+	ExecTimeout        durationWrapper         `json:"exec_timeout" yaml:"exec_timeout"`
 }
 
 type SkillConfig struct {
@@ -135,14 +137,15 @@ type MCPConfig struct {
 }
 
 type MilvusConfig struct {
-	Address        string `json:"address"`
-	Username       string `json:"username"`
-	Password       string `json:"password"`
-	APIKey         string `json:"api_key"`
-	Token          string `json:"token"`
-	DBName         string `json:"db_name"`
-	CollectionName string `json:"collection_name"`
-	Dimension      int    `json:"dimension"`
+	Address        string          `json:"address"`
+	Username       string          `json:"username"`
+	Password       string          `json:"password"`
+	APIKey         string          `json:"api_key"`
+	Token          string          `json:"token"`
+	DBName         string          `json:"db_name"`
+	CollectionName string          `json:"collection_name"`
+	Dimension      int             `json:"dimension"`
+	Timeout        durationWrapper `json:"timeout" yaml:"timeout"`
 }
 
 type VectorDBConfig struct {
@@ -192,6 +195,7 @@ type RAGConfig struct {
 	AutoReload     bool             `json:"auto_reload" yaml:"auto_reload"`         // 启动时是否自动增量重载知识库
 	TopK           int              `json:"top_k" yaml:"top_k"`                     // 默认召回 TopK
 	ScoreThreshold float32          `json:"score_threshold" yaml:"score_threshold"` // 默认相似度得分阈值
+	Timeout        durationWrapper  `json:"timeout" yaml:"timeout"`                 // 检索硬超时时间
 	Embedding      *EmbeddingConfig `json:"embedding" yaml:"embedding"`             // 独立 Embedding AI 配置
 	Chunker        *ChunkerConfig   `json:"chunker" yaml:"chunker"`                 // 细粒度切片配置
 	Rerank         *RerankConfig    `json:"rerank" yaml:"rerank"`                   // 独立 Rerank 重排配置

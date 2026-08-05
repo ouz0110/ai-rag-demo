@@ -7,7 +7,9 @@ import (
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	"ai-rag-demo/internal/biz/nocli/checkpoint"
 	"ai-rag-demo/internal/biz/nocli/openai/agent"
+	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	"ai-rag-demo/internal/common"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/data"
@@ -19,9 +21,10 @@ import (
 )
 
 type SessionManager struct {
-	allDb         *data.DB
-	cfg           *conf.Config
-	agentRegistry *agent.Registry
+	allDb           *data.DB
+	cfg             *conf.Config
+	agentRegistry   *agent.Registry
+	checkpointStore checkpoint.ICheckpointStore
 }
 
 func NewSessionManager(
@@ -30,10 +33,39 @@ func NewSessionManager(
 	agentRegistry *agent.Registry,
 ) *SessionManager {
 	return &SessionManager{
-		allDb:         allDb,
-		cfg:           cfg,
-		agentRegistry: agentRegistry,
+		allDb:           allDb,
+		cfg:             cfg,
+		agentRegistry:   agentRegistry,
+		checkpointStore: checkpoint.NewMemoryStore(),
 	}
+}
+
+func (m *SessionManager) SetCheckpointStore(store checkpoint.ICheckpointStore) {
+	if store != nil {
+		m.checkpointStore = store
+	}
+}
+
+func (m *SessionManager) SaveSubAgentCheckpoint(sessionID string, cp *agentbase.SubAgentCheckpoint) {
+	if sessionID == "" || cp == nil {
+		return
+	}
+	_ = m.checkpointStore.Save(context.Background(), cp)
+}
+
+func (m *SessionManager) GetSubAgentCheckpoint(sessionID string) (*agentbase.SubAgentCheckpoint, bool) {
+	if sessionID == "" {
+		return nil, false
+	}
+	cp, ok, _ := m.checkpointStore.Get(context.Background(), sessionID)
+	return cp, ok
+}
+
+func (m *SessionManager) ClearSubAgentCheckpoint(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	_ = m.checkpointStore.Delete(context.Background(), sessionID)
 }
 
 // InitOrCreateSession 初始化或加载会话，负责新建会话与 SystemPrompt 的安全落盘
@@ -150,7 +182,13 @@ func (m *SessionManager) FinalizeSessionTurn(
 	pendingInterrupt *dataBase.NocliInterruptModel,
 	finalStatus pb.SessionStatus,
 	checkpointMsg *openai.ChatCompletionMessage,
+	toolDurations ...map[string]int64,
 ) error {
+	var durations map[string]int64
+	if len(toolDurations) > 0 {
+		durations = toolDurations[0]
+	}
+
 	return m.allDb.Base.InTransaction(ctx, func(txCtx context.Context) error {
 		now := time.Now().Unix()
 
@@ -189,7 +227,7 @@ func (m *SessionManager) FinalizeSessionTurn(
 
 		// 3. 批量追加保存产生的增量消息
 		if len(newMsgs) > 0 {
-			if err := m.SaveHistory(txCtx, sessionID, newMsgs); err != nil {
+			if err := m.SaveHistory(txCtx, sessionID, newMsgs, durations); err != nil {
 				return fmt.Errorf("保存对话历史失败: %v", err)
 			}
 		}
@@ -265,10 +303,12 @@ func (m *SessionManager) DeleteSession(ctx context.Context, sessionID string) er
 
 // MapMessageModelToStreamChunks 将数据库持久化的 NocliMessageModel 映射为前端统一渲染的回放态 StreamChunk 切片
 func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessageModel) []*pb.StreamChunk {
-	var chatMsg openai.ChatCompletionMessage
-	if err := json.Unmarshal([]byte(model.Msg), &chatMsg); err != nil {
+	var storedMsg StoredChatMessage
+	if err := json.Unmarshal([]byte(model.Msg), &storedMsg); err != nil {
 		return nil
 	}
+	chatMsg := storedMsg.ChatCompletionMessage
+	durationMs := storedMsg.DurationMs
 
 	chunks := make([]*pb.StreamChunk, 0)
 
@@ -292,11 +332,17 @@ func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessage
 		return nil
 	}
 
+	agentName := chatMsg.Name
+	if agentName == "" {
+		agentName = "main"
+	}
+
 	switch chatMsg.Role {
 	case openai.ChatMessageRoleUser:
 		chunks = append(chunks, &pb.StreamChunk{
 			Event:     pb.StreamEventType_SET_DONE,
 			Role:      chatMsg.Role,
+			AgentName: agentName,
 			SessionId: sessionID,
 			Status:    pb.SessionStatus_SS_IDLE,
 			Text:      chatMsg.Content,
@@ -307,6 +353,7 @@ func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessage
 			chunks = append(chunks, &pb.StreamChunk{
 				Event:         pb.StreamEventType_SET_TEXT_DELTA,
 				Role:          chatMsg.Role,
+				AgentName:     agentName,
 				SessionId:     sessionID,
 				Text:          chatMsg.Content,
 				ReasoningText: chatMsg.ReasoningContent,
@@ -316,6 +363,7 @@ func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessage
 			chunks = append(chunks, &pb.StreamChunk{
 				Event:     pb.StreamEventType_SET_TOOL_START,
 				Role:      chatMsg.Role,
+				AgentName: agentName,
 				SessionId: sessionID,
 				ToolInfo: &pb.StreamToolInfo{
 					ToolCallId: tc.ID,
@@ -327,12 +375,15 @@ func MapMessageModelToStreamChunks(sessionID string, model dataBase.NocliMessage
 
 	case openai.ChatMessageRoleTool:
 		chunks = append(chunks, &pb.StreamChunk{
-			Event:     pb.StreamEventType_SET_TOOL_RESULT,
-			Role:      chatMsg.Role,
-			SessionId: sessionID,
+			Event:      pb.StreamEventType_SET_TOOL_RESULT,
+			Role:       chatMsg.Role,
+			AgentName:  agentName,
+			SessionId:  sessionID,
+			DurationMs: durationMs,
 			ToolInfo: &pb.StreamToolInfo{
 				ToolCallId:    chatMsg.ToolCallID,
 				ResultPreview: TruncateText(chatMsg.Content, 200),
+				DurationMs:    durationMs,
 			},
 		})
 	}

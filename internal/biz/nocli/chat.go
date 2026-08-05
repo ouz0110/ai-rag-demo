@@ -85,7 +85,7 @@ func NewChatBiz(
 	}
 }
 
-func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill, reqMCP bool) (bool, bool, bool) {
+func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill, reqMCP, reqRerank bool) (bool, bool, bool, bool) {
 	finalRAG := false
 	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Enable {
 		finalRAG = reqRAG
@@ -101,7 +101,12 @@ func resolveEnableFlags(cfg *conf.Config, reqRAG, reqSkill, reqMCP bool) (bool, 
 		finalMCP = reqMCP
 	}
 
-	return finalRAG, finalSkill, finalMCP
+	finalRerank := false
+	if cfg != nil && cfg.Source.RAG != nil && cfg.Source.RAG.Enable && cfg.Source.RAG.Rerank != nil && cfg.Source.RAG.Rerank.Enable {
+		finalRerank = reqRerank
+	}
+
+	return finalRAG, finalSkill, finalMCP, finalRerank
 }
 
 func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string, string) {
@@ -121,7 +126,22 @@ func (s *ChatBiz) getKBInfo(ctx context.Context, tenantID, kbID string) (string,
 	return "", ""
 }
 
-func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill, enableMCP bool, messages *[]openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+func parseAgentToolOptions(pbOpts *pb.AgentToolOptions) agentbase.AgentToolOptions {
+	if pbOpts == nil {
+		return agentbase.AgentToolOptions{
+			PassFullContextToSubAgent: false,
+			ReturnFullContextToParent: false,
+			StreamSubAgentExecution:   true,
+		}
+	}
+	return agentbase.AgentToolOptions{
+		PassFullContextToSubAgent: pbOpts.PassFullContextToSubAgent,
+		ReturnFullContextToParent: pbOpts.ReturnFullContextToParent,
+		StreamSubAgentExecution:   pbOpts.StreamSubAgentExecution,
+	}
+}
+
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill, enableMCP, enableRerank bool, agentOpts agentbase.AgentToolOptions, messages []openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
 	if kbTenantID == "" {
 		kbTenantID = vector.DefaultTenantID
 	}
@@ -134,24 +154,34 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 		kbName, kbDesc = s.getKBInfo(ctx, kbTenantID, kbID)
 	}
 
+	subBuffer := make([]openai.ChatCompletionMessage, 0)
+	var pendingCall *pb.PendingToolCall
 	pc := &agentbase.ParentContext{
-		SessionID:     sessionID,
-		KBTenantID:    kbTenantID,
-		KBID:          kbID,
-		KBName:        kbName,
-		KBDescription: kbDesc,
-		EnableRAG:     enableRAG,
-		EnableSkill:   enableSkill,
-		EnableMCP:     enableMCP,
-		Messages:      *messages,
+		SessionID:        sessionID,
+		KBTenantID:       kbTenantID,
+		KBID:             kbID,
+		KBName:           kbName,
+		KBDescription:    kbDesc,
+		EnableRAG:        enableRAG,
+		EnableSkill:      enableSkill,
+		EnableMCP:        enableMCP,
+		EnableRerank:     enableRerank,
+		AgentToolOptions: agentOpts,
+		Messages:         messages,
+		SubMsgBuffer:     &subBuffer,
+		PendingToolCall:  &pendingCall,
 		Appender: func(msgs []openai.ChatCompletionMessage) {
-			*messages = append(*messages, msgs...)
+			subBuffer = append(subBuffer, msgs...)
 		},
 	}
 	if emitter != nil {
 		pc.Emitter = emitter
 	}
-	return pc.Inject(ctx)
+	parentCtx := pc.Inject(ctx)
+	parentCtx = context.WithValue(parentCtx, agentbase.SubAgentCheckpointSaverKey, func(cp *agentbase.SubAgentCheckpoint) {
+		s.sessionMgr.SaveSubAgentCheckpoint(sessionID, cp)
+	})
+	return parentCtx
 }
 
 func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*pb.StreamChunk, error) {
@@ -177,8 +207,9 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		currentCompressCount = sessModel.CompressCount
 	}
 
-	finalRAG, finalSkill, finalMCP := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp)
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, &messages, nil)
+	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
+	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -215,7 +246,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg); err != nil {
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg, loopRes.ToolDurations); err != nil {
 		return nil, err
 	}
 
@@ -244,9 +275,34 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		return nil, err
 	}
 
-	messages, err := s.sessionMgr.LoadHistory(ctx, req.SessionId)
+	messages, err := s.sessionMgr.LoadHistoryForLLM(ctx, req.SessionId)
 	if err != nil {
 		return nil, fmt.Errorf("加载对话历史失败: %v", err)
+	}
+
+	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
+	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, nil)
+
+	// 🎯 优先尝试从子 Agent 专属 Checkpoint 秒级快速恢复执行
+	subLoopRes, subResumed, subErr := s.trySubAgentCheckpointResume(ctx, req, approvedTools, rejectedTools, nil)
+	if subErr != nil {
+		return nil, subErr
+	}
+	if subResumed {
+		if subLoopRes != nil && subLoopRes.Status == pb.SessionStatus_SS_INTERRUPTED {
+			return &pb.StreamChunk{
+				Event:            pb.StreamEventType_SET_INTERRUPT,
+				SessionId:        req.SessionId,
+				Status:           pb.SessionStatus_SS_INTERRUPTED,
+				PendingToolCalls: subLoopRes.PendingToolCalls,
+			}, nil
+		}
+		// 重新从 DB 加载包含了子 Agent 总结 ToolResult 的最新 LLM 历史，继续驱动主 Agent
+		messages, err = s.sessionMgr.LoadHistoryForLLM(ctx, req.SessionId)
+		if err != nil {
+			return nil, fmt.Errorf("加载更新后的对话历史失败: %v", err)
+		}
 	}
 
 	ag, ok := s.agentRegistry.Get(agent.MainAgentName)
@@ -260,9 +316,6 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 	if sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, req.SessionId); ok && sessModel != nil {
 		currentCompressCount = sessModel.CompressCount
 	}
-
-	finalRAG, finalSkill, finalMCP := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp)
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, &messages, nil)
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,
@@ -291,7 +344,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg); err != nil {
+	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg, loopRes.ToolDurations); err != nil {
 		return nil, err
 	}
 

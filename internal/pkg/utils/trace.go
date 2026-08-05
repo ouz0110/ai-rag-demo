@@ -21,6 +21,7 @@ type TracerConfig struct {
 	Endpoint   string
 	SampleRate float32
 	StdOut     bool
+	Timeout    time.Duration
 }
 
 // InitTracer OpenTelemetry Trace 初始化入口
@@ -36,10 +37,14 @@ func doInit(ctx context.Context, conf TracerConfig) (func(context.Context) error
 	// 1. 选择 exporter：优先 OTLP gRPC，其次 stdout 调试输出
 	switch {
 	case conf.Endpoint != "":
+		timeout := 5 * time.Second
+		if conf.Timeout > 0 {
+			timeout = conf.Timeout
+		}
 		exporter, err = otlptracegrpc.New(ctx,
 			otlptracegrpc.WithEndpoint(conf.Endpoint),
 			otlptracegrpc.WithInsecure(),
-			otlptracegrpc.WithTimeout(5*time.Second),
+			otlptracegrpc.WithTimeout(timeout),
 		)
 		if err != nil {
 			return nil, err

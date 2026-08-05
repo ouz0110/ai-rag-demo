@@ -273,9 +273,15 @@ func (c *ContextCompressor) buildFallbackExtractionSummary(msgs []openai.ChatCom
 	return sb.String()
 }
 
-// findSafeToolBoundary 向上寻找安全的 Tool-Call 闭包裁切边界，避免裁切掉成对的 ToolCall 与 ToolResult
+// findSafeToolBoundary 向上寻找安全的裁切边界，保证绝不切断 Pair (Assistant ToolCalls <-> Tool Result)
 func (c *ContextCompressor) findSafeToolBoundary(msgs []openai.ChatCompletionMessage, candidateIdx int) int {
+	if candidateIdx <= 0 || candidateIdx >= len(msgs) {
+		return candidateIdx
+	}
+
 	idx := candidateIdx
+
+	// 1. 如果当前候选索引指向 Tool 消息或带 ToolCalls 的 Assistant 消息，向前回溯
 	for idx > 0 && idx < len(msgs) {
 		msg := msgs[idx]
 		if msg.Role == openai.ChatMessageRoleTool ||
@@ -285,6 +291,14 @@ func (c *ContextCompressor) findSafeToolBoundary(msgs []openai.ChatCompletionMes
 			break
 		}
 	}
+
+	// 2. 继续向前寻找到最近的 User 消息边界，确保 toKeep 切片干净地从 User 消息开始
+	for scan := idx; scan > 0; scan-- {
+		if msgs[scan].Role == openai.ChatMessageRoleUser {
+			return scan
+		}
+	}
+
 	return idx
 }
 

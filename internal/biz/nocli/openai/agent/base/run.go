@@ -44,6 +44,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 	log.Debugw(ctx, "agent_loop_start", append(baseFields, "messages_count", len(messages), "tools_count", len(tools))...)
 	iteration := 0
 	totalToolCalls := 0
+	allToolDurations := make(map[string]int64)
 
 	// 🎯 检查恢复中断逻辑：查找末尾尚未产生的 tool 消息
 	_, unexecutedToolCalls := FindUnexecutedToolCalls(messages)
@@ -53,12 +54,20 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 		if err != nil {
 			return nil, err
 		}
+		for k, v := range res.ToolDurations {
+			allToolDurations[k] = v
+		}
 		if len(res.ExecutedMsgs) > 0 {
 			messages = append(messages, res.ExecutedMsgs...)
 		}
 		if res.HasInterrupt {
+			intAgentName := b.Name()
+			if res.PendingToolCall != nil && res.PendingToolCall.AgentName != "" {
+				intAgentName = res.PendingToolCall.AgentName
+			}
 			emitter(&pb.StreamChunk{
 				Event:            pb.StreamEventType_SET_INTERRUPT,
+				AgentName:        intAgentName,
 				SessionId:        sessionID,
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
@@ -69,6 +78,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Reply:            "包含需要授权确认的操作，请审批后恢复执行",
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
+				ToolDurations:    allToolDurations,
 			}, nil
 		}
 		if res.HasReject {
@@ -229,6 +239,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Reply:            msg.Content,
 				Status:           pb.SessionStatus_SS_IDLE,
 				NewCheckpointMsg: newCheckpointMsg,
+				ToolDurations:    allToolDurations,
 			}, nil
 		}
 
@@ -236,14 +247,22 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 		if err != nil {
 			return nil, err
 		}
+		for k, v := range res.ToolDurations {
+			allToolDurations[k] = v
+		}
 
 		if len(res.ExecutedMsgs) > 0 {
 			messages = append(messages, res.ExecutedMsgs...)
 		}
 
 		if res.HasInterrupt {
+			intAgentName := b.Name()
+			if res.PendingToolCall != nil && res.PendingToolCall.AgentName != "" {
+				intAgentName = res.PendingToolCall.AgentName
+			}
 			emitter(&pb.StreamChunk{
 				Event:            pb.StreamEventType_SET_INTERRUPT,
+				AgentName:        intAgentName,
 				SessionId:        sessionID,
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
@@ -256,6 +275,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Status:           pb.SessionStatus_SS_INTERRUPTED,
 				PendingToolCalls: []*pb.PendingToolCall{res.PendingToolCall},
 				NewCheckpointMsg: newCheckpointMsg,
+				ToolDurations:    allToolDurations,
 			}, nil
 		}
 		if res.HasReject {
@@ -277,6 +297,7 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 				Reply:            "操作已被用户拒绝，终止后续流程",
 				Status:           pb.SessionStatus_SS_IDLE,
 				NewCheckpointMsg: newCheckpointMsg,
+				ToolDurations:    allToolDurations,
 			}, nil
 		}
 	}

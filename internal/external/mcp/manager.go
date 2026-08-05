@@ -101,7 +101,13 @@ func (m *DefaultManager) startHealthCheckAndReconnect(ctx context.Context) {
 			for _, c := range clients {
 				if c.State() != StateConnected {
 					log.Infow(ctx, "attempting to reconnect mcp server", "server", c.cfg.Name)
-					reconnCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+					reconnTimeout := 15 * time.Second
+					if c.cfg.Timeout.Duration > 0 {
+						reconnTimeout = c.cfg.Timeout.Duration
+					} else if m.cfg != nil && m.cfg.DefaultTimeout.Duration > 0 {
+						reconnTimeout = m.cfg.DefaultTimeout.Duration
+					}
+					reconnCtx, cancel := context.WithTimeout(ctx, reconnTimeout)
 					if err := c.Connect(reconnCtx); err != nil {
 						log.Warnw(ctx, "reconnect mcp server failed", "server", c.cfg.Name, "error", err)
 					}

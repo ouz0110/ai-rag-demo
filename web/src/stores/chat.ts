@@ -20,6 +20,7 @@ export interface UIStreamTool {
   arguments: string;
   result_preview?: string;
   status: 'running' | 'completed';
+  duration_ms?: number;
 }
 
 export interface ChatSegmentText {
@@ -189,39 +190,72 @@ export const useChatStore = defineStore('chat', () => {
     const role = chunk.role || 'assistant';
     const text = chunk.text || chunk.Text;
     const reasoning = chunk.reasoning_text || chunk.reasoningText;
-    const toolInfo = chunk.tool_info || chunk.toolInfo;
+    const toolInfo = chunk.tool_info || chunk.toolInfo || chunk.ToolInfo;
+    const event = chunk.event;
 
     if (reasoning) {
       msg.reasoning_content += reasoning;
     }
 
-    // 1. 工具响应结果 (role === 'tool')
-    if (role === 'tool') {
-      if (toolInfo) {
-        const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
-        const tResult = toolInfo.result_preview || toolInfo.resultPreview || '';
+    // 1. 判断是否为工具响应结果处理 (SET_TOOL_RESULT 或 role === 'tool')
+    const isToolResultEvent =
+      role === 'tool' ||
+      event === 4 ||
+      event === 'SET_TOOL_RESULT' ||
+      !!(toolInfo && (toolInfo.result_preview !== undefined || toolInfo.resultPreview !== undefined || toolInfo.duration_ms !== undefined || toolInfo.durationMs !== undefined || chunk.duration_ms !== undefined || chunk.durationMs !== undefined));
 
-        // 更新 msg.tools
+    if (isToolResultEvent && toolInfo) {
+      const tId = toolInfo.tool_call_id || toolInfo.toolCallId || toolInfo.ToolCallId || '';
+      const tResult = toolInfo.result_preview || toolInfo.resultPreview || toolInfo.ResultPreview || '';
+      const durMs = toolInfo.duration_ms ?? toolInfo.durationMs ?? toolInfo.DurationMs ?? chunk.duration_ms ?? chunk.durationMs ?? chunk.DurationMs;
+
+      if (tId) {
+        // 更新 msg.tools 全局数组
         const existingGlobal = msg.tools.find((t) => t.tool_call_id === tId);
         if (existingGlobal) {
           if (tResult) existingGlobal.result_preview = tResult;
+          if (durMs !== undefined && durMs !== null && Number(durMs) > 0) existingGlobal.duration_ms = Number(durMs);
           existingGlobal.status = 'completed';
         }
 
-        // 反向查找 segment 中的工具并完成
+        // 遍历 msg.segments 查找并完成对应工具
+        let updatedInSeg = false;
         for (let i = msg.segments.length - 1; i >= 0; i--) {
           const seg = msg.segments[i];
           if (seg.type === 'tool') {
             const existingInSeg = seg.tools.find((t) => t.tool_call_id === tId);
             if (existingInSeg) {
               if (tResult) existingInSeg.result_preview = tResult;
+              if (durMs !== undefined && durMs !== null && Number(durMs) > 0) existingInSeg.duration_ms = Number(durMs);
               existingInSeg.status = 'completed';
+              updatedInSeg = true;
               break;
             }
           }
         }
+
+        if (!updatedInSeg) {
+          const lastSeg = msg.segments[msg.segments.length - 1];
+          const newToolObj: UIStreamTool = {
+            tool_call_id: tId,
+            tool_name: toolInfo.tool_name || toolInfo.toolName || 'tool',
+            arguments: toolInfo.arguments || '',
+            result_preview: tResult,
+            duration_ms: durMs ? Number(durMs) : undefined,
+            status: 'completed',
+          };
+          if (lastSeg && lastSeg.type === 'tool') {
+            lastSeg.tools.push(newToolObj);
+          } else {
+            msg.segments.push({
+              type: 'tool',
+              id: 'tool-' + Date.now() + Math.random(),
+              tools: [newToolObj],
+            });
+          }
+        }
       }
-      return;
+      if (role === 'tool') return;
     }
 
     // 2. 文本 Delta
@@ -240,57 +274,65 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     // 3. 工具启动 (SET_TOOL_START)
-    if (toolInfo) {
-      const tId = toolInfo.tool_call_id || toolInfo.toolCallId || '';
-      const tName = toolInfo.tool_name || toolInfo.toolName || '';
-      const tArgs = toolInfo.arguments || '';
-      const tResult = toolInfo.result_preview || toolInfo.resultPreview;
+    if (toolInfo && !isToolResultEvent) {
+      const tId = toolInfo.tool_call_id || toolInfo.toolCallId || toolInfo.ToolCallId || '';
+      const tName = toolInfo.tool_name || toolInfo.toolName || toolInfo.ToolName || '';
+      const tArgs = toolInfo.arguments || toolInfo.Arguments || '';
+      const tResult = toolInfo.result_preview || toolInfo.resultPreview || toolInfo.ResultPreview;
+      const durMs = toolInfo.duration_ms ?? toolInfo.durationMs ?? toolInfo.DurationMs ?? chunk.duration_ms ?? chunk.durationMs ?? chunk.DurationMs;
 
-      // 维护 msg.tools
-      const existingGlobal = msg.tools.find((x) => x.tool_call_id === tId);
-      if (existingGlobal) {
-        if (tResult) existingGlobal.result_preview = tResult;
-        existingGlobal.status = 'completed';
-      } else {
-        msg.tools.push({
-          tool_call_id: tId,
-          tool_name: tName,
-          arguments: tArgs,
-          result_preview: tResult,
-          status: tResult ? 'completed' : 'running',
-        });
-      }
-
-      // 维护 msg.segments 中的 tool segment
-      const lastSeg = msg.segments[msg.segments.length - 1];
-      if (lastSeg && lastSeg.type === 'tool') {
-        const existingInSeg = lastSeg.tools.find((x) => x.tool_call_id === tId);
-        if (existingInSeg) {
-          if (tResult) existingInSeg.result_preview = tResult;
-          existingInSeg.status = 'completed';
+      if (tId) {
+        const existingGlobal = msg.tools.find((x) => x.tool_call_id === tId);
+        if (existingGlobal) {
+          if (tResult) existingGlobal.result_preview = tResult;
+          if (durMs !== undefined && durMs !== null && Number(durMs) > 0) existingGlobal.duration_ms = Number(durMs);
+          existingGlobal.status = tResult ? 'completed' : 'running';
         } else {
-          lastSeg.tools.push({
+          msg.tools.push({
             tool_call_id: tId,
             tool_name: tName,
             arguments: tArgs,
             result_preview: tResult,
+            duration_ms: durMs ? Number(durMs) : undefined,
             status: tResult ? 'completed' : 'running',
           });
         }
-      } else {
-        msg.segments.push({
-          type: 'tool',
-          id: 'tool-' + Date.now() + Math.random(),
-          tools: [
-            {
-              tool_call_id: tId,
-              tool_name: tName,
-              arguments: tArgs,
-              result_preview: tResult,
-              status: tResult ? 'completed' : 'running',
-            },
-          ],
-        });
+
+        let foundInSeg = false;
+        for (let i = msg.segments.length - 1; i >= 0; i--) {
+          const seg = msg.segments[i];
+          if (seg.type === 'tool') {
+            const existingInSeg = seg.tools.find((x) => x.tool_call_id === tId);
+            if (existingInSeg) {
+              if (tResult) existingInSeg.result_preview = tResult;
+              if (durMs !== undefined && durMs !== null && Number(durMs) > 0) existingInSeg.duration_ms = Number(durMs);
+              if (tResult) existingInSeg.status = 'completed';
+              foundInSeg = true;
+              break;
+            }
+          }
+        }
+
+        if (!foundInSeg) {
+          const lastSeg = msg.segments[msg.segments.length - 1];
+          const newToolObj: UIStreamTool = {
+            tool_call_id: tId,
+            tool_name: tName,
+            arguments: tArgs,
+            result_preview: tResult,
+            duration_ms: durMs ? Number(durMs) : undefined,
+            status: tResult ? 'completed' : 'running',
+          };
+          if (lastSeg && lastSeg.type === 'tool') {
+            lastSeg.tools.push(newToolObj);
+          } else {
+            msg.segments.push({
+              type: 'tool',
+              id: 'tool-' + Date.now() + Math.random(),
+              tools: [newToolObj],
+            });
+          }
+        }
       }
     }
   }
@@ -330,23 +372,19 @@ export const useChatStore = defineStore('chat', () => {
           created_at: Date.now(),
         });
       } else {
-        if (!currentAssistantMsg) {
+        const agentName = chunk.agent_name || chunk.agentName || 'main';
+        if (!currentAssistantMsg || currentAssistantMsg.agent_name !== agentName) {
           currentAssistantMsg = {
             id: 'assistant-' + Date.now() + Math.random(),
             role: 'assistant',
             content: '',
             reasoning_content: '',
-            agent_name: chunk.agent_name || chunk.agentName || 'main',
+            agent_name: agentName,
             tools: [],
             segments: [],
             created_at: Date.now(),
           };
           list.push(currentAssistantMsg);
-        }
-
-        const agentName = chunk.agent_name || chunk.agentName;
-        if (agentName) {
-          currentAssistantMsg.agent_name = agentName;
         }
 
         appendChunkToMessage(currentAssistantMsg, chunk);
@@ -416,6 +454,8 @@ export const useChatStore = defineStore('chat', () => {
         enable_rag: kbStore.enableRAG,
         enable_skill: kbStore.enableSkill,
         enable_mcp: kbStore.enableMCP,
+        enable_rerank: kbStore.enableRerank,
+        agent_tool_options: kbStore.agentToolOptions,
       },
       signal: abortController.signal,
       onChunk: (chunk: StreamChunk) => {
@@ -448,6 +488,19 @@ export const useChatStore = defineStore('chat', () => {
   ) {
     if (isGenerating.value) return;
 
+    // 清理尾部残留的空占位符
+    const last = messages.value[messages.value.length - 1];
+    if (
+      last &&
+      last.role === 'assistant' &&
+      !last.content &&
+      !last.reasoning_content &&
+      (!last.tools || last.tools.length === 0) &&
+      (!last.segments || last.segments.length === 0)
+    ) {
+      messages.value.pop();
+    }
+
     isGenerating.value = true;
     pendingToolCalls.value = [];
     sessionStatus.value = SessionStatus.SS_RUNNING;
@@ -470,6 +523,8 @@ export const useChatStore = defineStore('chat', () => {
         enable_rag: kbStore.enableRAG,
         enable_skill: kbStore.enableSkill,
         enable_mcp: kbStore.enableMCP,
+        enable_rerank: kbStore.enableRerank,
+        agent_tool_options: kbStore.agentToolOptions,
       },
       signal: abortController.signal,
       onChunk: (chunk: StreamChunk) => {
@@ -520,34 +575,50 @@ export const useChatStore = defineStore('chat', () => {
       sessionStatus.value = chunk.status;
     }
 
+    // 中断事件 / 待确认工具调用处理 (优先提取 pending_tool_calls)
+    const pending = chunk.pending_tool_calls || chunk.pendingToolCalls;
+    if (pending && pending.length > 0) {
+      pendingToolCalls.value = pending.map((p: any) => ({
+        interrupt_id: p.interrupt_id || p.interruptId || '',
+        tool_call_id: p.tool_call_id || p.toolCallId || '',
+        tool_name: p.tool_name || p.toolName || '',
+        arguments: p.arguments || '',
+        agent_name: p.agent_name || p.agentName || '',
+      }));
+      sessionStatus.value = SessionStatus.SS_INTERRUPTED;
+    }
+
     const event = chunk.event;
     if (event === 8 || event === 'SET_CONTEXT_COMPRESSED') {
-      // 1. 在当前对话轮次中寻找是否已经存在一条由“压缩开始”通知创建的 system 压缩卡片
+      const info = chunk.compress_info || chunk.compressInfo;
+      const count = info?.compress_count ?? (info as any)?.compressCount ?? 0;
+
+      // 1. 根据 compress_count 精确寻找匹配的 system 压缩卡片 (避免全局覆盖)
       let existingCompressIndex = -1;
       for (let i = messages.value.length - 1; i >= 0; i--) {
         const m = messages.value[i];
-        if (m.role === 'system' && (m.id.startsWith('compress-') || m.compress_info)) {
-          existingCompressIndex = i;
-          break;
-        }
-        if (m.role === 'user') {
-          break;
+        if (m.role === 'system' && m.compress_info) {
+          const mCount = m.compress_info.compress_count ?? (m.compress_info as any)?.compressCount ?? 0;
+          if (mCount === count && count > 0) {
+            existingCompressIndex = i;
+            break;
+          }
         }
       }
 
       if (existingCompressIndex !== -1) {
-        // 更新现有压缩卡片内容与压缩信息
+        // 更新对应批次的压缩卡片内容与压缩信息
         const existingMsg = messages.value[existingCompressIndex];
         if (chunk.text || chunk.Text) {
           existingMsg.content = chunk.text || chunk.Text;
         }
-        if (chunk.compress_info || chunk.compressInfo) {
-          existingMsg.compress_info = chunk.compress_info || chunk.compressInfo;
+        if (info) {
+          existingMsg.compress_info = info;
         }
       } else {
-        // 创建新的 system 压缩卡片
+        // 创建新的批次 system 压缩卡片 (多组压缩在对应位置独立呈现)
         const compressMsg: UIChatMessage = {
-          id: 'compress-' + Date.now() + Math.random(),
+          id: 'compress-' + (count || Date.now()) + '-' + Math.random(),
           role: 'system',
           content: chunk.text || chunk.Text || '',
           reasoning_content: '',
@@ -555,7 +626,7 @@ export const useChatStore = defineStore('chat', () => {
           tools: [],
           segments: [],
           created_at: Date.now(),
-          compress_info: chunk.compress_info || chunk.compressInfo,
+          compress_info: info,
         };
 
         // 🎯 关键逻辑：若末尾是空 Assistant 占位消息 (isStreaming: true 且无内容)，则将压缩卡片插在占位消息前
@@ -576,40 +647,52 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     let targetMsg = messages.value[messages.value.length - 1];
+    const agentName = chunk.agent_name || chunk.agentName || 'main';
 
-    if (!targetMsg || targetMsg.role !== 'assistant') {
+    // 🎯 检查当前 Chunk 是否包含实际输出 Payload
+    const hasPayload =
+      Boolean(chunk.text || chunk.Text) ||
+      Boolean(chunk.reasoning_text || chunk.reasoningText) ||
+      Boolean(chunk.tool_info || chunk.toolInfo) ||
+      chunk.role === 'tool';
+
+    if (
+      targetMsg &&
+      targetMsg.role === 'assistant' &&
+      !targetMsg.content &&
+      !targetMsg.reasoning_content &&
+      (!targetMsg.tools || targetMsg.tools.length === 0) &&
+      (!targetMsg.segments || targetMsg.segments.length === 0)
+    ) {
+      // 重用末尾空占位消息，更新为当前 Chunk 的 agent_name
+      targetMsg.agent_name = agentName;
+    } else if (
+      !targetMsg ||
+      targetMsg.role !== 'assistant' ||
+      (targetMsg.agent_name && targetMsg.agent_name !== agentName)
+    ) {
+      // 若无 Payload 且属于纯控制事件 (如 SET_INTERRUPT / SET_DONE / SET_ERROR)，无需拉起空消息卡片
+      if (!hasPayload && (event === 5 || event === 'SET_INTERRUPT' || event === 6 || event === 'SET_DONE')) {
+        return;
+      }
+
       targetMsg = {
         id: 'assistant-' + Date.now() + Math.random(),
         role: 'assistant',
         content: '',
         reasoning_content: '',
-        agent_name: chunk.agent_name || chunk.agentName || 'main',
+        agent_name: agentName,
         tools: [],
         segments: [],
         created_at: Date.now(),
         isStreaming: true,
       };
       messages.value.push(targetMsg);
-    }
-
-    const agentName = chunk.agent_name || chunk.agentName;
-    if (agentName) {
+    } else if (agentName && !targetMsg.agent_name) {
       targetMsg.agent_name = agentName;
     }
 
     appendChunkToMessage(targetMsg, chunk);
-
-    // 中断事件 / 待确认工具调用
-    const pending = chunk.pending_tool_calls || chunk.pendingToolCalls;
-    if (pending && pending.length > 0) {
-      pendingToolCalls.value = pending.map((p: any) => ({
-        interrupt_id: p.interrupt_id || p.interruptId || '',
-        tool_call_id: p.tool_call_id || p.toolCallId || '',
-        tool_name: p.tool_name || p.toolName || '',
-        arguments: p.arguments || '',
-      }));
-      sessionStatus.value = SessionStatus.SS_INTERRUPTED;
-    }
 
     // 错误判定
     if (chunk.error) {

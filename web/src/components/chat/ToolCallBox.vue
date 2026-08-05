@@ -1,20 +1,26 @@
 <template>
-  <div class="tools-group-box">
+  <div class="tools-group-box" :class="{ 'has-agent-tool': hasAgentTools }">
     <!-- 头部汇总栏 (点击折叠/展开全部工具调用) -->
     <div class="tools-group-header" @click="isExpanded = !isExpanded">
       <div class="header-left">
-        <div class="status-icon-badge" :class="isAllCompleted ? 'completed' : 'running'">
-          <Wrench v-if="isAllCompleted" :size="13" />
+        <div class="status-icon-badge" :class="[isAllCompleted ? 'completed' : 'running', hasAgentTools ? 'agent-tool-badge' : '']">
+          <Bot v-if="hasAgentTools" :size="13" class="text-amber-400" />
+          <Wrench v-else-if="isAllCompleted" :size="13" />
           <Loader2 v-else :size="13" class="animate-spin" />
         </div>
 
         <div class="title-info">
           <span class="main-title">
-            工具调用 ({{ tools.length }})
+            {{ hasAgentTools ? 'Agent 调度与工具执行' : '工具调用' }} ({{ tools.length }})
           </span>
           <div class="tool-tags-inline">
-            <span v-for="name in uniqueToolNames" :key="name" class="tool-name-tag">
-              {{ name }}
+            <span
+              v-for="name in uniqueToolNames"
+              :key="name"
+              class="tool-name-tag"
+              :class="isAgentTool(name) ? 'agent-tag' : ''"
+            >
+              {{ isAgentTool(name) ? `⚡ @${getSubAgentName(name)}` : name }}
             </span>
           </div>
         </div>
@@ -22,7 +28,7 @@
 
       <div class="header-right">
         <span class="status-badge" :class="isAllCompleted ? 'completed' : 'running'">
-          {{ isAllCompleted ? '执行完成' : `执行中 (${completedCount}/${tools.length})...` }}
+          {{ isAllCompleted ? `执行完成${totalDurationText ? ` (${totalDurationText})` : ''}` : `执行中 (${completedCount}/${tools.length})...` }}
         </span>
         <ChevronDown :size="14" class="chevron-icon" :class="{ 'rotate-180': isExpanded }" />
       </div>
@@ -34,30 +40,58 @@
         v-for="(t, index) in tools"
         :key="t.tool_call_id || index"
         class="tool-step-item"
+        :class="isAgentTool(t.tool_name) ? 'agent-step-item' : ''"
       >
         <div class="step-header" @click="toggleStep(index)">
           <div class="step-title-box">
             <span class="step-index">#{{ index + 1 }}</span>
-            <span class="tool-name">{{ t.tool_name }}</span>
+
+            <!-- 如果是 AgentTool (委派子 Agent)，渲染为专有 Sub-Agent Badge -->
+            <span v-if="isAgentTool(t.tool_name)" class="agent-delegation-title flex items-center gap-1.5 font-semibold text-amber-300">
+              <Bot :size="14" class="text-amber-400" />
+              <span>⚡ 委派子 Agent (@{{ getSubAgentName(t.tool_name) }})</span>
+            </span>
+
+            <span v-else class="tool-name">{{ t.tool_name }}</span>
+
             <span
               class="step-status-tag"
               :class="t.status === 'completed' ? 'success' : 'running'"
             >
-              {{ t.status === 'completed' ? '成功' : '运行中' }}
+              {{ t.status === 'completed' ? (formatDuration(t.duration_ms) ? `成功 (${formatDuration(t.duration_ms)})` : '成功') : '运行中' }}
             </span>
           </div>
           <ChevronDown :size="12" class="chevron-icon" :class="{ 'rotate-180': openSteps.has(index) }" />
         </div>
 
         <div v-show="openSteps.has(index)" class="step-detail-box">
-          <div class="detail-section">
-            <span class="section-label">调用参数:</span>
-            <pre class="code-pre">{{ formatArgs(t.arguments) }}</pre>
-          </div>
-          <div v-if="t.result_preview" class="detail-section mt-2">
-            <span class="section-label text-emerald-400">执行结果预览:</span>
-            <pre class="code-pre result-pre">{{ t.result_preview }}</pre>
-          </div>
+          <!-- 专有 AgentTool 委派渲染: 清晰展示 Task 任务与总结，而非裸 JSON -->
+          <template v-if="isAgentTool(t.tool_name)">
+            <div class="detail-section p-2.5 rounded-lg bg-amber-500/10 border border-amber-500/20">
+              <div class="flex items-center gap-1.5 text-xs font-semibold text-amber-300 mb-1">
+                <span>📋 委派任务:</span>
+                <span class="text-amber-200/90 font-normal">{{ extractQueryArg(t.arguments) }}</span>
+              </div>
+              <div v-if="t.result_preview" class="detail-section mt-2 border-t border-amber-500/15 pt-2">
+                <span class="section-label text-amber-400 text-xs font-semibold">执行总结:</span>
+                <div class="text-xs text-slate-200 leading-relaxed mt-1 whitespace-pre-wrap max-h-60 overflow-y-auto custom-scrollbar p-2 rounded bg-black/30 border border-amber-500/10">
+                  {{ t.result_preview }}
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- 普通物理工具渲染 -->
+          <template v-else>
+            <div class="detail-section">
+              <span class="section-label">调用参数:</span>
+              <pre class="code-pre">{{ formatArgs(t.arguments) }}</pre>
+            </div>
+            <div v-if="t.result_preview" class="detail-section mt-2">
+              <span class="section-label text-emerald-400">执行结果预览:</span>
+              <pre class="code-pre result-pre">{{ t.result_preview }}</pre>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -66,7 +100,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { Wrench, Loader2, ChevronDown } from 'lucide-vue-next';
+import { Wrench, Loader2, ChevronDown, Bot } from 'lucide-vue-next';
 import type { UIStreamTool } from '../../stores/chat';
 
 const props = defineProps<{
@@ -89,6 +123,32 @@ const isAllCompleted = computed(() => {
   return completedCount.value === props.tools.length;
 });
 
+const hasAgentTools = computed(() => {
+  return props.tools.some((t) => isAgentTool(t.tool_name));
+});
+
+function isAgentTool(toolName: string): boolean {
+  return toolName.startsWith('delegate_to_') || toolName.includes('delegate_to_');
+}
+
+function getSubAgentName(toolName: string): string {
+  if (toolName.startsWith('delegate_to_')) {
+    return toolName.replace('delegate_to_', '');
+  }
+  return toolName;
+}
+
+function extractQueryArg(argsStr: string): string {
+  try {
+    const obj = JSON.parse(argsStr);
+    if (obj && typeof obj === 'object') {
+      if (obj.query) return obj.query;
+      if (obj.task) return obj.task;
+    }
+  } catch (e) {}
+  return argsStr;
+}
+
 function toggleStep(index: number) {
   if (openSteps.value.has(index)) {
     openSteps.value.delete(index);
@@ -107,6 +167,24 @@ function formatArgs(jsonStr: string) {
   } catch (e) {
     return jsonStr;
   }
+}
+
+const totalDurationText = computed(() => {
+  let sum = 0;
+  for (const t of props.tools) {
+    if (t.duration_ms && Number(t.duration_ms) > 0) {
+      sum += Number(t.duration_ms);
+    }
+  }
+  return formatDuration(sum);
+});
+
+function formatDuration(ms?: any): string {
+  if (ms === undefined || ms === null || ms === '' || ms === 0) return '';
+  const num = typeof ms === 'number' ? ms : Number(ms);
+  if (isNaN(num) || num <= 0) return '';
+  if (num < 1000) return `${Math.round(num)}ms`;
+  return `${(num / 1000).toFixed(2)}s`;
 }
 </script>
 
@@ -280,33 +358,59 @@ function formatArgs(jsonStr: string) {
 }
 
 .step-detail-box {
-  padding: 8px 10px;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(0, 0, 0, 0.4);
+  padding: 8px 10px 10px 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .section-label {
-  font-size: 0.7rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
   color: #94a3b8;
-  display: block;
-  margin-bottom: 4px;
 }
 
 .code-pre {
   margin: 0;
-  padding: 8px 10px;
-  background: #060812;
+  padding: 6px 8px;
+  background: rgba(15, 23, 42, 0.6);
   border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 0.725rem;
   color: #cbd5e1;
-  font-size: 0.75rem;
-  font-family: 'Fira Code', monospace;
-  overflow-x: auto;
   white-space: pre-wrap;
   word-break: break-all;
+  font-family: monospace;
+  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .result-pre {
-  color: #6ee7b7;
+  color: #67e8f9;
+}
+
+/* 🎯 AgentTool 专有统一视觉样式 */
+.tools-group-box.has-agent-tool {
+  border-color: rgba(245, 158, 11, 0.25);
+  background: rgba(245, 158, 11, 0.04);
+}
+
+.status-icon-badge.agent-tool-badge {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.tool-name-tag.agent-tag {
+  background: rgba(245, 158, 11, 0.15);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.agent-step-item {
+  border-color: rgba(245, 158, 11, 0.2) !important;
+  background: rgba(245, 158, 11, 0.03) !important;
 }
 </style>

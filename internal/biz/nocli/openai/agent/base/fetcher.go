@@ -99,6 +99,7 @@ func (b *BaseAgent) GetStreamFetcher(sessionID string, chatModel *chatmodel.Chat
 
 		combinedMessage.Role = openai.ChatMessageRoleAssistant
 		combinedMessage.Content = textBuilder.String()
+		combinedMessage.Name = b.Name()
 
 		if len(toolCallsMap) > 0 {
 			toolCalls := make([]openai.ToolCall, 0, len(toolCallsMap))

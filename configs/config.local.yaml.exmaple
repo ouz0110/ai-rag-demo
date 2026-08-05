@@ -28,6 +28,7 @@ source:
     endpoint: "localhost:4317" # jaeger上报端口
     sample_rate: 1
     std_out: true
+    timeout: 5s
   redis:
     base:
       password: "123456"
@@ -93,6 +94,7 @@ source:
       db_name: "default"
       collection_name: "rag_knowledge"
       dimension: 1024
+      timeout: 5s
   rag:
     enable: true 
     knowledge_dir: "./workspace/knowledges"
@@ -100,6 +102,7 @@ source:
     auto_reload: true
     top_k: 5
     score_threshold: 0.6
+    timeout: 60s                             # 检索硬超时时间
     embedding:
       api_key: "ollama"
       base_url: "http://localhost:8091/v1" # Ollama 本地 Embedding API 接口地址
@@ -135,6 +138,7 @@ source:
       split_threshold: 0.45
   nocli:
     work_dir: "./workspace/agent"
+    exec_timeout: 5m
     allowed_paths:
       - "./workspace/skills"
       - "./workspace/knowledges"

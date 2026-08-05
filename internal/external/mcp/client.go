@@ -110,7 +110,11 @@ func (c *Client) RefreshTools(ctx context.Context) {
 		return
 	}
 
-	listCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	timeout := 10 * time.Second
+	if c.cfg.Timeout.Duration > 0 {
+		timeout = c.cfg.Timeout.Duration
+	}
+	listCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	resp, err := client.ListTools(listCtx, mcp.ListToolsRequest{})

@@ -25,7 +25,11 @@ func newMilvusAdapter(cfg *conf.MilvusConfig) (VectorStore, error) {
 		return nil, fmt.Errorf("milvus configuration is empty or address is missing")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	timeout := 5 * time.Second
+	if cfg.Timeout.Duration > 0 {
+		timeout = cfg.Timeout.Duration
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	apiKey := cfg.APIKey

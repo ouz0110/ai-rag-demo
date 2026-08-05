@@ -9,7 +9,10 @@
   <div
     v-else
     class="message-wrapper group relative"
-    :class="msg.role === 'user' ? 'user-layout' : 'assistant-layout'"
+    :class="[
+      msg.role === 'user' ? 'user-layout' : 'assistant-layout',
+      msg.agent_name && msg.agent_name !== 'main' ? 'sub-agent-wrapper ml-6 pl-3 border-l-2 border-amber-500/30' : ''
+    ]"
     @click="handleCardClick"
   >
     <!-- Avatar 头像栏 -->
@@ -25,15 +28,31 @@
     <!-- 消息正文与卡片区 -->
     <div class="message-content-wrapper">
       <!-- 头部 Sender 身份信息 (仅助手展示) -->
-      <div v-if="msg.role === 'assistant'" class="sender-info">
+      <div v-if="msg.role === 'assistant'" class="sender-info flex items-center gap-1.5">
         <span class="sender-name">AI-RAG Agent</span>
-        <span v-if="msg.agent_name" class="agent-tag">@{{ msg.agent_name }}</span>
+        <span
+          v-if="!msg.agent_name || msg.agent_name === 'main'"
+          class="agent-badge main-agent-badge"
+          title="调度中心主 Agent"
+        >
+          🤖 主 Agent (@main)
+        </span>
+        <span
+          v-else
+          class="agent-badge sub-agent-badge"
+          :title="`专有子 Agent: @${msg.agent_name}`"
+        >
+          ⚡ 子 Agent (@{{ msg.agent_name }})
+        </span>
       </div>
 
       <!-- 消息 Card -->
       <div
         class="message-card"
-        :class="msg.role === 'user' ? 'user-card' : 'assistant-card'"
+        :class="[
+          msg.role === 'user' ? 'user-card' : 'assistant-card',
+          msg.agent_name && msg.agent_name !== 'main' ? 'sub-agent-card' : ''
+        ]"
       >
         <!-- 1. 助手专属: CoT 深度思考展开框 -->
         <CoTBox
@@ -51,65 +70,87 @@
 
         <!-- 3. 助手消息 (按 segments 顺序交织渲染小块: 文本 ➔ 工具 ➔ 文本 ➔ 工具) -->
         <div v-else class="segments-container flex flex-col gap-2">
-          <!-- 助手等待/思考中 Loading 状态 (当尚未收到 content / reasoning / segments 时) -->
+          <!-- 子 Agent 专有折叠/展开控制栏 -->
           <div
-            v-if="msg.isStreaming && !msg.content && !msg.reasoning_content && (!msg.segments || msg.segments.length === 0)"
-            class="agent-loading-state"
+            v-if="msg.agent_name && msg.agent_name !== 'main'"
+            class="sub-agent-collapse-header flex items-center justify-between px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/20 cursor-pointer select-none mb-1 hover:bg-amber-500/15 transition-colors"
+            @click="isSubAgentExpanded = !isSubAgentExpanded"
           >
-            <Loader2 :size="16" class="animate-spin text-indigo-400" />
-            <span class="loading-text font-medium">AI-RAG Agent 正在思考中...</span>
-            <div class="loading-dots">
-              <span class="dot"></span>
-              <span class="dot"></span>
-              <span class="dot"></span>
+            <div class="flex items-center gap-2 text-xs font-semibold text-amber-300">
+              <Bot :size="14" class="text-amber-400" />
+              <span>子 Agent (@{{ msg.agent_name }}) 独立执行步骤明细</span>
+            </div>
+            <div class="flex items-center gap-1.5 text-[11px] text-amber-400/80">
+              <span>{{ isSubAgentExpanded ? '点击折叠' : '点击展开查看' }}</span>
+              <ChevronDown :size="13" class="transition-transform duration-200" :class="{ 'rotate-180': isSubAgentExpanded }" />
             </div>
           </div>
 
-          <!-- 回退兼容: 如果 segments 为空，但 content 存在 -->
+          <!-- 折叠卡片主体 (展开后具备固定最大高度与优雅滚动条) -->
           <div
-            v-if="(!msg.segments || msg.segments.length === 0) && msg.content"
-            class="markdown-body"
-            :class="{ 'cursor-blink': msg.isStreaming }"
-            v-html="renderMarkdown(msg.content)"
-          ></div>
-
-          <!-- 按顺序动态渲染 segments 小块 -->
-          <div
-            v-for="(seg, idx) in msg.segments"
-            :key="seg.id || idx"
-            class="segment-item"
+            v-show="!msg.agent_name || msg.agent_name === 'main' || isSubAgentExpanded"
+            :class="msg.agent_name && msg.agent_name !== 'main' ? 'sub-agent-body-scroll max-h-72 overflow-y-auto pr-1 space-y-2' : ''"
           >
-            <!-- 文本小块 (独立区域 + 悬浮专属复制按钮) -->
+            <!-- 助手等待/思考中 Loading 状态 (当尚未收到 content / reasoning / segments 时) -->
             <div
-              v-if="seg.type === 'text' && seg.content"
-              class="text-segment-block group/segment relative"
+              v-if="msg.isStreaming && !msg.content && !msg.reasoning_content && (!msg.segments || msg.segments.length === 0)"
+              class="agent-loading-state"
             >
-              <div
-                class="markdown-body"
-                :class="{ 'cursor-blink': msg.isStreaming && idx === msg.segments.length - 1 }"
-                v-html="renderMarkdown(seg.content)"
-              ></div>
-
-              <!-- 每个文本小块的悬浮操作按钮 -->
-              <div class="segment-actions-bar">
-                <button
-                  @click.stop="copySegmentText(seg.id, seg.content)"
-                  class="action-btn"
-                  :title="copiedSegmentId === seg.id ? '已复制小块内容' : '复制此小块'"
-                >
-                  <Check v-if="copiedSegmentId === seg.id" :size="12" class="text-emerald-400" />
-                  <Copy v-else :size="12" />
-                  <span>{{ copiedSegmentId === seg.id ? '已复制' : '复制小块' }}</span>
-                </button>
+              <Loader2 :size="16" class="animate-spin text-indigo-400" />
+              <span class="loading-text font-medium">AI-RAG Agent 正在思考中...</span>
+              <div class="loading-dots">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
               </div>
             </div>
 
-            <!-- 工具小块 (放置在该工具调用的对应位置) -->
-            <ToolCallBox
-              v-else-if="seg.type === 'tool' && seg.tools && seg.tools.length > 0"
-              :tools="seg.tools"
-              class="my-1.5"
-            />
+            <!-- 回退兼容: 如果 segments 为空，但 content 存在 -->
+            <div
+              v-if="(!msg.segments || msg.segments.length === 0) && msg.content"
+              class="markdown-body"
+              :class="{ 'cursor-blink': msg.isStreaming }"
+              v-html="renderMarkdown(msg.content)"
+            ></div>
+
+            <!-- 按顺序动态渲染 segments 小块 -->
+            <div
+              v-for="(seg, idx) in msg.segments"
+              :key="seg.id || idx"
+              class="segment-item"
+            >
+              <!-- 文本小块 (独立区域 + 悬浮专属复制按钮) -->
+              <div
+                v-if="seg.type === 'text' && seg.content"
+                class="text-segment-block group/segment relative"
+              >
+                <div
+                  class="markdown-body"
+                  :class="{ 'cursor-blink': msg.isStreaming && idx === msg.segments.length - 1 }"
+                  v-html="renderMarkdown(seg.content)"
+                ></div>
+
+                <!-- 每个文本小块的悬浮操作按钮 -->
+                <div class="segment-actions-bar">
+                  <button
+                    @click.stop="copySegmentText(seg.id, seg.content)"
+                    class="action-btn"
+                    :title="copiedSegmentId === seg.id ? '已复制小块内容' : '复制此小块'"
+                  >
+                    <Check v-if="copiedSegmentId === seg.id" :size="12" class="text-emerald-400" />
+                    <Copy v-else :size="12" />
+                    <span>{{ copiedSegmentId === seg.id ? '已复制' : '复制小块' }}</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- 工具调用小块 (独立卡片组件) -->
+              <ToolCallBox
+                v-else-if="seg.type === 'tool' && seg.tools && seg.tools.length > 0"
+                :tools="seg.tools"
+                class="my-1.5"
+              />
+            </div>
           </div>
         </div>
 
@@ -154,7 +195,7 @@
 import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import { Bot, Copy, Check, Brain, AlertCircle, Loader2 } from 'lucide-vue-next';
+import { Bot, Copy, Check, Brain, AlertCircle, Loader2, ChevronDown } from 'lucide-vue-next';
 import CoTBox from './CoTBox.vue';
 import ToolCallBox from './ToolCallBox.vue';
 import ContextCompressCard from './ContextCompressCard.vue';
@@ -169,6 +210,7 @@ const userStore = useUserStore();
 const copied = ref(false);
 const copiedReasoning = ref(false);
 const copiedSegmentId = ref<string>('');
+const isSubAgentExpanded = ref(true);
 
 const userAvatarText = computed(() => {
   const name = userStore.userInfo?.nickname || userStore.userInfo?.account || 'U';
@@ -332,14 +374,27 @@ function handleCardClick(e: MouseEvent) {
   color: #f1f5f9;
 }
 
-.agent-tag {
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: rgba(99, 102, 241, 0.15);
-  border: 1px solid rgba(99, 102, 241, 0.25);
-  color: #a5b4fc;
+.agent-badge {
+  padding: 1.5px 7px;
+  border-radius: 6px;
   font-size: 0.65rem;
+  font-weight: 600;
   font-family: monospace;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.main-agent-badge {
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  color: #a5b4fc;
+}
+
+.sub-agent-badge {
+  background: rgba(245, 158, 11, 0.15);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
 }
 
 .message-card {
@@ -363,6 +418,12 @@ function handleCardClick(e: MouseEvent) {
   color: #f8fafc;
   border-top-left-radius: 4px;
   backdrop-filter: blur(12px);
+}
+
+.sub-agent-card {
+  background: rgba(26, 20, 38, 0.85) !important;
+  border: 1px solid rgba(245, 158, 11, 0.25) !important;
+  box-shadow: 0 4px 16px rgba(245, 158, 11, 0.08) !important;
 }
 
 .error-box {

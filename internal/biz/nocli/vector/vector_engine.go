@@ -485,7 +485,7 @@ func (e *VectorEngine) IngestDocument(ctx context.Context, tenantID, docID, titl
 }
 
 // RetrieveContext 极简 RAG 在线检索路径：Milvus Pure Index 向量召回 -> parent_id 顺序去重 -> MySQL 批量回查 Parent 上下文 -> Parent 块 Rerank -> 方案 B 动态 Prompt 组装
-func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText string, topK int) ([]*RAGContext, error) {
+func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText string, topK int, enableRerank bool) ([]*RAGContext, error) {
 	if tenantID == "" || queryText == "" {
 		return nil, fmt.Errorf("empty query params")
 	}
@@ -505,8 +505,13 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 
 	collectionName := e.getCollectionName()
 
-	// 【SRE 硬超时防护】：设置 1.5 秒硬超时，超时触发降级返回空或兜底结果，防止拖垮在线 QPS--先60s，本地性能太差了
-	retCtx, cancel := context.WithTimeout(ctx, 60000*time.Millisecond)
+	timeout := 60 * time.Second
+	if e.cfg != nil && e.cfg.Source.RAG != nil && e.cfg.Source.RAG.Timeout.Duration > 0 {
+		timeout = e.cfg.Source.RAG.Timeout.Duration
+	}
+
+	// 【SRE 硬超时防护】：设置硬超时，超时触发降级返回空或兜底结果，防止拖垮在线 QPS
+	retCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	// 1. 生成 Query 的 Embedding 向量
@@ -614,7 +619,7 @@ func (e *VectorEngine) RetrieveContext(ctx context.Context, tenantID, queryText 
 		})
 	}
 
-	if e.reranker != nil && len(rerankCandidates) > 1 {
+	if enableRerank && e.reranker != nil && len(rerankCandidates) > 1 {
 		reranked, rrkUsage, rErr := e.reranker.Rerank(retCtx, queryText, rerankCandidates)
 		if rErr != nil {
 			log.Warnf(ctx, "Reranker failed: %v, fallback to un-reranked order", rErr)

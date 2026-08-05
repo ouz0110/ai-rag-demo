@@ -82,11 +82,16 @@ func main() {
 	metrics.Register()
 
 	ctx := context.Background()
+	var otelTimeout time.Duration
+	if config.Source.OTel != nil {
+		otelTimeout = config.Source.OTel.Timeout.Duration
+	}
 	shutdown, err := utils.InitTracer(ctx, utils.TracerConfig{
 		ServerName: config.Name,
 		Endpoint:   config.Source.OTel.Endpoint,
 		SampleRate: config.Source.OTel.SampleRate,
 		StdOut:     config.Source.OTel.StdOut,
+		Timeout:    otelTimeout,
 	})
 	if err != nil {
 		os.Exit(1)

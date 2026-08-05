@@ -104,6 +104,7 @@ export interface PendingToolCall {
   tool_call_id: string;
   tool_name: string;
   arguments: string;
+  agent_name?: string;
 }
 
 // 流式工具执行信息
@@ -164,6 +165,12 @@ export interface CompletionRequest {
   enable_rag?: boolean;
   enable_skill?: boolean;
   enable_mcp?: boolean;
+  enable_rerank?: boolean;
+  agent_tool_options?: {
+    pass_full_context_to_sub_agent?: boolean;
+    return_full_context_to_parent?: boolean;
+    stream_sub_agent_execution?: boolean;
+  };
 }
 
 // 恢复执行请求
@@ -179,6 +186,12 @@ export interface ResumeRequest {
   enable_rag?: boolean;
   enable_skill?: boolean;
   enable_mcp?: boolean;
+  enable_rerank?: boolean;
+  agent_tool_options?: {
+    pass_full_context_to_sub_agent?: boolean;
+    return_full_context_to_parent?: boolean;
+    stream_sub_agent_execution?: boolean;
+  };
 }
 
 // 会话概览信息
