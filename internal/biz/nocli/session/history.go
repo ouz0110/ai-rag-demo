@@ -215,6 +215,52 @@ func (m *SessionManager) SaveHistory(ctx context.Context, sessionID string, msgs
 	return m.allDb.Base.NocliMessageRepo.CreateBatch(ctx, models)
 }
 
+// CleanOrCancelPendingInterrupts 当用户放弃审批直接发送新提问时：作废挂起中断、删快照、并为未闭合的 ToolCall 自动插入取消响应
+func (m *SessionManager) CleanOrCancelPendingInterrupts(ctx context.Context, sessionID string) error {
+	return m.allDb.Base.InTransaction(ctx, func(txCtx context.Context) error {
+		// 1. 将所有 IS_PENDING 中断记录置为已作废/取消
+		_ = m.allDb.Base.NocliInterruptRepo.CancelPendingBySessionID(txCtx, sessionID)
+
+		// 2. 删除对应的 SubAgentCheckpoint 快照
+		m.ClearSubAgentCheckpoint(sessionID)
+
+		// 3. 读取当前消息历史，检查末尾是否有未响应的 ToolCall
+		models, err := m.allDb.Base.NocliMessageRepo.GetBySessionID(txCtx, sessionID)
+		if err != nil || len(models) == 0 {
+			return nil
+		}
+
+		// 检查未闭合的 tool_call_id
+		cancelToolMsgs := make([]openai.ChatCompletionMessage, 0)
+		lastModel := models[len(models)-1]
+		var lastMsg openai.ChatCompletionMessage
+		if err := json.Unmarshal([]byte(lastModel.Msg), &lastMsg); err == nil {
+			if lastMsg.Role == openai.ChatMessageRoleAssistant && len(lastMsg.ToolCalls) > 0 {
+				for _, tc := range lastMsg.ToolCalls {
+					cancelToolMsgs = append(cancelToolMsgs, openai.ChatCompletionMessage{
+						Role:       openai.ChatMessageRoleTool,
+						Content:    "【操作已取消】: 用户放弃了该授权审批并提出了新的问题。",
+						ToolCallID: tc.ID,
+						Name:       lastMsg.Name,
+					})
+				}
+			}
+		}
+
+		// 4. 落盘平滑闭合消息链，避免 LLM API 报 400 错
+		if len(cancelToolMsgs) > 0 {
+			if err := m.SaveHistory(txCtx, sessionID, cancelToolMsgs, nil); err != nil {
+				return fmt.Errorf("保存取消工具消息失败: %w", err)
+			}
+		}
+
+		// 5. 将会话状态重置为 IDLE
+		_ = m.allDb.Base.NocliSessionRepo.UpdateStatus(txCtx, sessionID, pb.SessionStatus_SS_IDLE)
+
+		return nil
+	})
+}
+
 func TruncateText(str string, maxChars int) string {
 	runes := []rune(str)
 	if len(runes) > maxChars {

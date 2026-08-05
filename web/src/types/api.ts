@@ -55,6 +55,7 @@ export const SessionStatus = {
   SS_IDLE: 1,        // 空闲/已完成
   SS_RUNNING: 2,     // 处理中
   SS_INTERRUPTED: 3, // 已中断，等待人工决策
+  SS_PAUSED: 4,      // 用户主动停止/暂停 (可继续生成)
 } as const;
 export type SessionStatus = typeof SessionStatus[keyof typeof SessionStatus];
 
@@ -171,6 +172,7 @@ export interface CompletionRequest {
     return_full_context_to_parent?: boolean;
     stream_sub_agent_execution?: boolean;
   };
+  is_continue?: boolean;
 }
 
 // 恢复执行请求

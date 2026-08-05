@@ -64,6 +64,14 @@ service NocliChat {
       body: "*"
     };
   }
+
+  // 🎯 主动停止指定会话当前正在运行的 Agent 任务
+  rpc StopSession(StopSessionRequest) returns (StopSessionResponse) {
+    option (google.api.http) = {
+      post: "/nocli/v1/session/stop"
+      body: "*"
+    };
+  }
 }
 
 // 会话状态
@@ -72,6 +80,7 @@ enum SessionStatus {
   SS_IDLE = 1;        // 空闲/已完成
   SS_RUNNING = 2;     // 处理中
   SS_INTERRUPTED = 3; // 已中断，等待人工决策
+  SS_PAUSED = 4;      // 用户主动停止/暂停 (可继续生成)
 }
 
 // 中断事件状态
@@ -212,6 +221,8 @@ message CompletionRequest {
   bool enable_rerank = 9;
   // 子 Agent 调度工具控制选项
   AgentToolOptions agent_tool_options = 10;
+  // 是否为“继续生成 (Continue Generation)”请求 (当上次回答中途停止时顺着末尾 Token 续写)
+  bool is_continue = 11;
 }
 
 // 恢复执行请求
@@ -300,4 +311,14 @@ message GetSessionHistoryResponse {
   repeated PendingToolCall pending_tool_calls = 4;
   int32 total = 5;
   bool has_more = 6;
+}
+
+// 停止会话任务请求
+message StopSessionRequest {
+  string session_id = 1 [(validate.rules).string.min_len = 1];
+}
+
+// 停止会话任务响应
+message StopSessionResponse {
+  bool success = 1;
 }

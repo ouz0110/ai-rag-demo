@@ -2,7 +2,9 @@ package nocli
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
@@ -21,15 +23,59 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		emitter = agentbase.NoopStreamEmitter
 	}
 
-	sessionID, err := s.sessionMgr.InitOrCreateSession(ctx, req.SessionId, req.Message)
-	if err != nil {
-		return err
+	var sessionID string
+	var messages []openai.ChatCompletionMessage
+	var newMessageStart int
+	var err error
+
+	sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, req.SessionId)
+	if req.IsContinue {
+		// 🎯 继续生成 (Continue Generation): 读取历史，直接让 LLM 顺着末尾 Assistant 内容接续往下写
+		if req.SessionId == "" || !ok || sessModel == nil {
+			return fmt.Errorf("继续生成请求所对应的会话不存在或未提供有效的 session_id")
+		}
+		sessionID = req.SessionId
+		messages, err = s.sessionMgr.LoadHistoryForLLM(ctx, sessionID)
+		if err != nil {
+			return fmt.Errorf("读取历史以继续生成失败: %w", err)
+		}
+
+		// 🎯 兼容 OpenAI API 规范：为未写完的 Assistant 补齐 Continuation 提示，保证大模型流畅向下接续
+		if len(messages) > 0 && messages[len(messages)-1].Role == openai.ChatMessageRoleAssistant && sessModel.Status == pb.SessionStatus_SS_PAUSED {
+			lastContent := messages[len(messages)-1].Content
+			contPrompt := fmt.Sprintf("请从你刚才中断的地方接着继续输出，紧接在 '%s' 后面直接写后面的内容，不要重复前面写过的文字。", agentbase.TruncateText(lastContent, 80))
+			messages = append(messages, openai.ChatCompletionMessage{
+				Role:    openai.ChatMessageRoleUser,
+				Content: contPrompt,
+			})
+		}
+		newMessageStart = len(messages)
+	} else {
+		// 🎯 检查当前 Session 是否处于 SS_INTERRUPTED。若是且用户发了新 Prompt，说明放弃前次审批中断，自动取消中断并闭合消息链
+		if ok && sessModel.Status == pb.SessionStatus_SS_INTERRUPTED {
+			log.Infow(ctx, "user_discarded_interrupt_with_new_prompt", "session_id", req.SessionId)
+			if cleanErr := s.sessionMgr.CleanOrCancelPendingInterrupts(ctx, req.SessionId); cleanErr != nil {
+				log.Warnw(ctx, "clean_pending_interrupts_failed", "error", cleanErr)
+			}
+		}
+
+		sessionID, err = s.sessionMgr.InitOrCreateSession(ctx, req.SessionId, req.Message)
+		if err != nil {
+			return err
+		}
+
+		messages, newMessageStart, err = s.sessionMgr.PrepareMessagesForCompletion(ctx, sessionID, req.Message)
+		if err != nil {
+			return err
+		}
 	}
 
-	messages, newMessageStart, err := s.sessionMgr.PrepareMessagesForCompletion(ctx, sessionID, req.Message)
-	if err != nil {
-		return err
-	}
+	// 🎯 立即向前端推送首帧 (包含正式的 session_id)，确保前端立刻同步 sessionID 路由与状态
+	emitter(&pb.StreamChunk{
+		Event:     pb.StreamEventType_SET_UNSPECIFIED,
+		SessionId: sessionID,
+		Status:    pb.SessionStatus_SS_RUNNING,
+	})
 
 	ag, ok := s.agentRegistry.Get(agent.MainAgentName)
 	if !ok {
@@ -38,19 +84,24 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 
 	approvedTools := s.sessionMgr.LoadSessionApprovedTools(ctx, sessionID)
 
-	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "agent_name", ag.Name(), "model", ag.Model())
+	log.Debugw(ctx, "stream_completion_start", "session_id", sessionID, "agent_name", ag.Name(), "model", ag.Model(), "is_continue", req.IsContinue)
 
 	var currentCompressCount int32 = 0
 	if sessModel, ok, _ := s.allDb.Base.NocliSessionRepo.GetBySessionID(ctx, sessionID); ok && sessModel != nil {
 		currentCompressCount = sessModel.CompressCount
 	}
 
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	s.RegisterActiveCancel(sessionID, cancelRun)
+	defer s.UnregisterActiveCancel(sessionID)
+
 	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
 	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, emitter)
+	runCtx = s.withParentContext(runCtx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, emitter)
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
 	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
-	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
+	loopRes, err := ag.Run(runCtx, &agentbase.RunOptions{
 		SessionID:     sessionID,
 		Messages:      messages,
 		ApprovedTools: approvedTools,
@@ -60,6 +111,11 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		Compressor:    s.contextCompressor,
 		CompressCount: currentCompressCount,
 	})
+
+	// 🎯 脱钩落盘：即使客户端中途切断 HTTP 连接，仍使用 5 秒独立的 saveCtx 保证数据 100% 安全入库
+	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer saveCancel()
+
 	if err != nil {
 		log.Errorw(ctx, "stream_completion_error", "session_id", sessionID, "error", err)
 		emitter(&pb.StreamChunk{
@@ -68,6 +124,9 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 			Status:    pb.SessionStatus_SS_IDLE,
 			Error:     &pb.StreamError{Code: 500, Message: err.Error()},
 		})
+		if loopRes != nil && len(loopRes.Messages) > newMessageStart {
+			_ = s.sessionMgr.FinalizeSessionTurn(saveCtx, sessionID, loopRes.Messages[newMessageStart:], nil, pb.SessionStatus_SS_IDLE, nil)
+		}
 		return err
 	}
 
@@ -84,7 +143,25 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg, loopRes.ToolDurations); err != nil {
+	finalStatus := loopRes.Status
+	if ctx.Err() != nil || loopRes.Status == pb.SessionStatus_SS_PAUSED {
+		finalStatus = pb.SessionStatus_SS_PAUSED
+		log.Infow(ctx, "stream_completion_canceled_gracefully", "session_id", sessionID)
+		if loopRes != nil && len(loopRes.Messages) > newMessageStart {
+			_ = s.sessionMgr.FinalizeSessionTurn(saveCtx, sessionID, loopRes.Messages[newMessageStart:], nil, pb.SessionStatus_SS_PAUSED, nil, loopRes.ToolDurations)
+		} else {
+			_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(saveCtx, sessionID, pb.SessionStatus_SS_PAUSED)
+		}
+		emitter(&pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_DONE,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_PAUSED,
+		})
+		return nil
+
+	}
+
+	if err := s.sessionMgr.FinalizeSessionTurn(saveCtx, sessionID, loopRes.Messages[newMessageStart:], pendingInterrupt, finalStatus, loopRes.NewCheckpointMsg, loopRes.ToolDurations); err != nil {
 		return err
 	}
 
@@ -143,9 +220,14 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		currentCompressCount = sessModel.CompressCount
 	}
 
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	s.RegisterActiveCancel(req.SessionId, cancelRun)
+	defer s.UnregisterActiveCancel(req.SessionId)
+
 	fetcher := ag.GetStreamFetcher(req.SessionId, s.openaiChatModel, emitter)
 	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
-	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
+	loopRes, err := ag.Run(runCtx, &agentbase.RunOptions{
 		SessionID:     req.SessionId,
 		Messages:      messages,
 		ApprovedTools: approvedTools,
@@ -156,7 +238,27 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		Compressor:    s.contextCompressor,
 		CompressCount: currentCompressCount,
 	})
+
+	// 🎯 脱钩落盘：即使客户端中途切断 HTTP 连接，仍使用 5 秒独立的 saveCtx 保证数据 100% 安全入库
+	saveCtx, saveCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer saveCancel()
+
 	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil || strings.Contains(err.Error(), "context canceled") {
+			log.Infow(ctx, "stream_resume_canceled_gracefully", "session_id", req.SessionId)
+			if loopRes != nil && len(loopRes.Messages) > newMessageStart {
+				_ = s.sessionMgr.FinalizeSessionTurn(saveCtx, req.SessionId, loopRes.Messages[newMessageStart:], nil, pb.SessionStatus_SS_PAUSED, nil, loopRes.ToolDurations)
+			} else {
+				_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(saveCtx, req.SessionId, pb.SessionStatus_SS_PAUSED)
+			}
+			emitter(&pb.StreamChunk{
+				Event:     pb.StreamEventType_SET_DONE,
+				SessionId: req.SessionId,
+				Status:    pb.SessionStatus_SS_PAUSED,
+			})
+			return nil
+		}
+
 		log.Errorw(ctx, "stream_resume_error", "session_id", req.SessionId, "error", err)
 		emitter(&pb.StreamChunk{
 			Event:     pb.StreamEventType_SET_ERROR,
@@ -164,6 +266,9 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 			Status:    pb.SessionStatus_SS_IDLE,
 			Error:     &pb.StreamError{Code: 500, Message: err.Error()},
 		})
+		if loopRes != nil && len(loopRes.Messages) > newMessageStart {
+			_ = s.sessionMgr.FinalizeSessionTurn(saveCtx, req.SessionId, loopRes.Messages[newMessageStart:], nil, pb.SessionStatus_SS_IDLE, nil)
+		}
 		return err
 	}
 
@@ -180,7 +285,12 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 		}
 	}
 
-	if err := s.sessionMgr.FinalizeSessionTurn(ctx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, loopRes.Status, loopRes.NewCheckpointMsg, loopRes.ToolDurations); err != nil {
+	finalStatus := loopRes.Status
+	if ctx.Err() != nil || loopRes.Status == pb.SessionStatus_SS_PAUSED {
+		finalStatus = pb.SessionStatus_SS_PAUSED
+	}
+
+	if err := s.sessionMgr.FinalizeSessionTurn(saveCtx, req.SessionId, loopRes.Messages[newMessageStart:], pendingInterrupt, finalStatus, loopRes.NewCheckpointMsg, loopRes.ToolDurations); err != nil {
 		return err
 	}
 

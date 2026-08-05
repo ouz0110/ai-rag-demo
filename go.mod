@@ -42,7 +42,6 @@ require (
 )
 
 require (
-	github.com/jinzhu/copier v0.4.0
 	github.com/mark3labs/mcp-go v0.57.0
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa

@@ -41,6 +41,19 @@ func (b *BaseAgent) GetStreamFetcher(sessionID string, chatModel *chatmodel.Chat
 				break
 			}
 			if err != nil {
+				if textBuilder.Len() > 0 || len(toolCallsMap) > 0 {
+					combinedMessage.Role = openai.ChatMessageRoleAssistant
+					combinedMessage.Content = textBuilder.String()
+					combinedMessage.Name = b.Name()
+					if len(toolCallsMap) > 0 {
+						toolCalls := make([]openai.ToolCall, 0, len(toolCallsMap))
+						for _, tc := range toolCallsMap {
+							toolCalls = append(toolCalls, *tc)
+						}
+						combinedMessage.ToolCalls = toolCalls
+					}
+					return combinedMessage, err
+				}
 				return openai.ChatCompletionMessage{}, err
 			}
 

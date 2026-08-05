@@ -1,11 +1,14 @@
 package base
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	"ai-rag-demo/internal/pkg/log"
-	"context"
-	"fmt"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -211,13 +214,40 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 		}
 
 		msg, err := fetcher(ctx, req)
-		if err != nil && len(req.Tools) > 0 {
+		if err != nil && len(req.Tools) > 0 && (!errors.Is(err, context.Canceled) && ctx.Err() == nil && !strings.Contains(err.Error(), "context canceled")) {
 			log.Warnw(ctx, "llm_tools_unsupported_fallback", append(baseFields, "iteration", iteration, "error", err)...)
 			req.Tools = nil
 			msg, err = fetcher(ctx, req)
 		}
 		if err != nil {
+			// 🎯 核心增强：如果是 context canceled / 用户主动停止 / 网络断连，按正常停止收尾，不抛出 LLM 失败异常
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil || strings.Contains(err.Error(), "context canceled") {
+				log.Infow(ctx, "agent_run_canceled_by_user_or_context", append(baseFields, "session_id", sessionID)...)
+				if msg.Content != "" || len(msg.ToolCalls) > 0 {
+					messages = append(messages, msg)
+				}
+				return &LoopResult{
+					AgentName:        b.Name(),
+					Messages:         messages,
+					Reply:            msg.Content,
+					Status:           pb.SessionStatus_SS_PAUSED,
+					NewCheckpointMsg: newCheckpointMsg,
+					ToolDurations:    allToolDurations,
+				}, nil
+			}
+
 			log.Errorw(ctx, "llm_call_error", append(baseFields, "iteration", iteration, "error", err)...)
+			if msg.Content != "" || len(msg.ToolCalls) > 0 {
+				messages = append(messages, msg)
+				return &LoopResult{
+					AgentName:        b.Name(),
+					Messages:         messages,
+					Reply:            msg.Content,
+					Status:           pb.SessionStatus_SS_IDLE,
+					NewCheckpointMsg: newCheckpointMsg,
+					ToolDurations:    allToolDurations,
+				}, nil
+			}
 			return nil, fmt.Errorf("LLM 调用失败: %v", err)
 		}
 

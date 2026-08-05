@@ -3,6 +3,8 @@ package nocli
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
@@ -34,6 +36,60 @@ type ChatBiz struct {
 	cfg               *conf.Config
 	allDb             *data.DB
 	contextCompressor compressor.ICompressor
+	activeCancels     sync.Map // 🎯 session_id -> context.CancelFunc 运行时任务句柄
+}
+
+func (s *ChatBiz) RegisterActiveCancel(sessionID string, cancel context.CancelFunc) {
+	if sessionID != "" && cancel != nil {
+		s.activeCancels.Store(sessionID, cancel)
+	}
+}
+
+func (s *ChatBiz) UnregisterActiveCancel(sessionID string) {
+	if sessionID != "" {
+		s.activeCancels.Delete(sessionID)
+	}
+}
+
+// StopSession 主动停止指定会话当前正在运行的 Agent 任务
+func (s *ChatBiz) StopSession(ctx context.Context, req *pb.StopSessionRequest) (*pb.StopSessionResponse, error) {
+	sessionID := req.SessionId
+	log.Infow(ctx, "stop_session_requested", "session_id", sessionID)
+
+	stopped := false
+	if sessionID != "" {
+		if val, ok := s.activeCancels.LoadAndDelete(sessionID); ok {
+			if cancel, okFunc := val.(context.CancelFunc); okFunc && cancel != nil {
+				cancel()
+				stopped = true
+				log.Infow(ctx, "stop_session_active_cancel_triggered", "session_id", sessionID)
+			}
+		}
+	}
+
+	// 🎯 保底防御：若 session_id 未能精确匹配（例如前端还停留在临时 temp-ID 上），则清理并中断正在运行的活跃任务
+	if !stopped {
+		s.activeCancels.Range(func(key, value any) bool {
+			if cancel, okFunc := value.(context.CancelFunc); okFunc && cancel != nil {
+				cancel()
+				if kStr, okStr := key.(string); okStr {
+					s.activeCancels.Delete(kStr)
+					_ = s.sessionMgr.CleanOrCancelPendingInterrupts(ctx, kStr)
+					log.Infow(ctx, "stop_session_active_cancel_fallback_triggered", "fallback_session_id", kStr)
+				}
+			}
+			return true
+		})
+	} else {
+		_ = s.sessionMgr.CleanOrCancelPendingInterrupts(ctx, sessionID)
+	}
+
+	// 🎯 将数据库中该 Session 的状态显式置为 SS_PAUSED (暂停/支持继续生成)
+	if sessionID != "" && !strings.HasPrefix(sessionID, "temp-") {
+		_ = s.allDb.Base.NocliSessionRepo.UpdateStatus(ctx, sessionID, pb.SessionStatus_SS_PAUSED)
+	}
+
+	return &pb.StopSessionResponse{Success: true}, nil
 }
 
 func NewChatBiz(

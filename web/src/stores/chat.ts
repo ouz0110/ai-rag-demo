@@ -47,6 +47,7 @@ export interface UIChatMessage {
   segments: ChatSegment[];
   created_at: number;
   isStreaming?: boolean;
+  isStopped?: boolean;
   error?: string;
   compress_info?: CompressInfo;
 }
@@ -386,8 +387,14 @@ export const useChatStore = defineStore('chat', () => {
           };
           list.push(currentAssistantMsg);
         }
-
         appendChunkToMessage(currentAssistantMsg, chunk);
+      }
+    }
+
+    if (list.length > 0) {
+      const last = list[list.length - 1];
+      if (last.role === 'assistant') {
+        last.isStopped = true;
       }
     }
 
@@ -700,15 +707,87 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  // 手动中断流
-  function stopGeneration() {
+  // 手动中断流 (用户点击停止生成)
+  async function stopGeneration() {
+    const sessionIdToStop = currentSessionId.value;
     if (abortController) {
       abortController.abort();
       abortController = null;
     }
     isGenerating.value = false;
+    sessionStatus.value = SessionStatus.SS_PAUSED;
+    const lastAssistantMsg = [...messages.value].reverse().find(m => m.role === 'assistant');
+    if (lastAssistantMsg) {
+      lastAssistantMsg.isStreaming = false;
+      lastAssistantMsg.isStopped = true;
+    }
+    // 🎯 触发 Vue 3 Ref 响应式更新，确保 computed 立即重算并渲染【继续生成】按钮
+    messages.value = [...messages.value];
+
+    // 🎯 显式向后端发送 StopSession 接口，通知后端立刻感知并 cancel() 正在运行的任务
+    if (sessionIdToStop) {
+      try {
+        await chatApi.stopSession({ session_id: sessionIdToStop });
+      } catch (err) {
+        console.warn('通知后端停止任务失败:', err);
+      }
+    }
+  }
+
+  // 🎯 继续生成 (Continue Generation)
+  async function continueGeneration() {
+    if (isGenerating.value || !currentSessionId.value) return;
+
     const lastMsg = messages.value[messages.value.length - 1];
-    if (lastMsg) lastMsg.isStreaming = false;
+    if (lastMsg && lastMsg.role === 'assistant') {
+      lastMsg.isStopped = false;
+      lastMsg.isStreaming = true;
+    }
+
+    isGenerating.value = true;
+    sessionStatus.value = SessionStatus.SS_RUNNING;
+    abortController = new AbortController();
+
+    const kbStore = useKBStore();
+
+    await fetchSSE({
+      url: '/nocli/v1/stream/completion',
+      body: {
+        message: '',
+        session_id: currentSessionId.value,
+        is_continue: true,
+        model: selectedModel.value,
+        kb_tenant_id: kbStore.activeKbTenantId,
+        kb_id: kbStore.activeKbId,
+        enable_rag: kbStore.enableRAG,
+        enable_skill: kbStore.enableSkill,
+        enable_mcp: kbStore.enableMCP,
+        enable_rerank: kbStore.enableRerank,
+        agent_tool_options: kbStore.agentToolOptions,
+      },
+      signal: abortController.signal,
+      onChunk: (chunk: StreamChunk) => {
+        handleStreamChunk(chunk);
+      },
+      onError: (err: Error) => {
+        const last = messages.value[messages.value.length - 1];
+        if (last) {
+          last.error = err.message || '继续生成发生错误';
+          last.isStreaming = false;
+        }
+        isGenerating.value = false;
+        sessionStatus.value = SessionStatus.SS_IDLE;
+      },
+      onDone: () => {
+        const last = messages.value[messages.value.length - 1];
+        if (last) {
+          last.isStreaming = false;
+          last.isStopped = false;
+        }
+        isGenerating.value = false;
+        fetchSessions();
+      },
+    });
   }
 
   // 删除会话
@@ -749,6 +828,7 @@ export const useChatStore = defineStore('chat', () => {
     sendMessage,
     resumeStream,
     stopGeneration,
+    continueGeneration,
     deleteSession,
     resetCurrentChat,
   };

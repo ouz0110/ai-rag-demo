@@ -29,5 +29,13 @@ export const chatApi = {
     }
     return http.post('/nocli/v1/session/history', data);
   },
+
+  // 🎯 主动停止指定会话正在运行的任务 (POST)
+  stopSession(data: { session_id: string }): Promise<{ success: boolean }> {
+    if (!data || !data.session_id || data.session_id === 'undefined') {
+      return Promise.reject(new Error('无效的 session_id'));
+    }
+    return http.post('/nocli/v1/session/stop', data);
+  },
 };
 

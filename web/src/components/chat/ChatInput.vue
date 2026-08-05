@@ -1,15 +1,28 @@
 <template>
   <div class="chat-input-container">
     <div class="input-card">
-      <!-- 顶栏：指示图标与按键快捷提示 -->
+      <!-- 顶栏：指示图标、继续生成按钮与按键快捷提示 -->
       <div class="card-header">
         <div class="brand-tag">
           <Sparkles :size="13" class="tag-icon" />
           <span>AI-RAG 大模型流式对话平台</span>
         </div>
 
-        <div class="shortcut-hint">
-          <span class="hint-key">Shift + Enter</span> 换行 <span class="divider">|</span> <span class="hint-key">Enter</span> 发送
+        <div class="header-right">
+          <!-- 🎯 固定在输入框右上角的【继续生成】按钮 -->
+          <button
+            v-if="canContinue"
+            @click="chatStore.continueGeneration()"
+            class="continue-header-btn"
+            title="顺着上一条回答继续接续生成"
+          >
+            <Play :size="13" class="fill-amber-400/20 text-amber-400" />
+            <span>继续生成</span>
+          </button>
+
+          <div class="shortcut-hint">
+            <span class="hint-key">Shift + Enter</span> 换行 <span class="divider">|</span> <span class="hint-key">Enter</span> 发送
+          </div>
         </div>
       </div>
 
@@ -37,7 +50,7 @@
         <div class="action-buttons">
           <button
             v-if="chatStore.isGenerating"
-            @click="chatStore.stopGeneration"
+            @click="chatStore.stopGeneration()"
             class="stop-btn"
           >
             <Square :size="14" class="fill-current" />
@@ -60,13 +73,18 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
-import { Sparkles, Send, Square } from 'lucide-vue-next';
+import { ref, computed } from 'vue';
+import { Sparkles, Send, Square, Play } from 'lucide-vue-next';
 import { useChatStore } from '../../stores/chat';
+import { SessionStatus } from '../../types/api';
 import KBSelector from '../KBSelector.vue';
 
 const chatStore = useChatStore();
 const inputContent = ref('');
+
+const canContinue = computed(() => {
+  return !chatStore.isGenerating && chatStore.sessionStatus === SessionStatus.SS_PAUSED;
+});
 
 function handleSend() {
   const text = inputContent.value.trim();
@@ -125,6 +143,39 @@ function handleSend() {
 
 .tag-icon {
   color: #818cf8;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.continue-header-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.35);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.15);
+}
+
+.continue-header-btn:hover {
+  background: rgba(245, 158, 11, 0.25);
+  border-color: rgba(245, 158, 11, 0.6);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 12px rgba(245, 158, 11, 0.3);
+}
+
+.continue-header-btn:active {
+  transform: translateY(0);
 }
 
 .shortcut-hint {

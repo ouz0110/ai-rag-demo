@@ -50,6 +50,11 @@ func (s *ChatService) GetSessionHistory(ctx context.Context, req *pb.GetSessionH
 	return s.chatBiz.GetSessionHistory(ctx, req)
 }
 
+// StopSession 主动停止指定会话当前正在运行的 Agent 任务 RPC
+func (s *ChatService) StopSession(ctx context.Context, req *pb.StopSessionRequest) (*pb.StopSessionResponse, error) {
+	return s.chatBiz.StopSession(ctx, req)
+}
+
 // StreamCompletion 原生 gRPC 流式服务端接口
 func (s *ChatService) StreamCompletion(req *pb.CompletionRequest, stream pb.NocliChat_StreamCompletionServer) error {
 	ctx := stream.Context()

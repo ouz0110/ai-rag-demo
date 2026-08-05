@@ -186,6 +186,17 @@
           <Brain v-else :size="13" />
           <span>{{ copiedReasoning ? '已复制思考' : '复制思考' }}</span>
         </button>
+
+        <!-- 🎯 继续生成按钮 (仅当当前会话处于 SS_PAUSED 暂停状态且为全局最后一条消息时展示) -->
+        <button
+          v-if="canContinueMessage"
+          @click="chatStore.continueGeneration()"
+          class="action-btn text-amber-300 border-amber-500/30 hover:bg-amber-500/10"
+          title="顺着当前回答继续生成后续内容"
+        >
+          <Play :size="13" class="text-amber-400 fill-amber-400/20" />
+          <span>继续生成</span>
+        </button>
       </div>
     </div>
   </div>
@@ -195,22 +206,35 @@
 import { ref, computed } from 'vue';
 import { marked } from 'marked';
 import hljs from 'highlight.js';
-import { Bot, Copy, Check, Brain, AlertCircle, Loader2, ChevronDown } from 'lucide-vue-next';
+import { Bot, Copy, Check, Brain, AlertCircle, Loader2, ChevronDown, Play } from 'lucide-vue-next';
 import CoTBox from './CoTBox.vue';
 import ToolCallBox from './ToolCallBox.vue';
 import ContextCompressCard from './ContextCompressCard.vue';
 import { useUserStore } from '../../stores/user';
-import type { UIChatMessage } from '../../stores/chat';
+import { useChatStore, type UIChatMessage } from '../../stores/chat';
+import { SessionStatus } from '../../types/api';
 
 const props = defineProps<{
   msg: UIChatMessage;
 }>();
 
 const userStore = useUserStore();
+const chatStore = useChatStore();
 const copied = ref(false);
 const copiedReasoning = ref(false);
 const copiedSegmentId = ref<string>('');
 const isSubAgentExpanded = ref(true);
+
+const isVeryLastMessageInChat = computed(() => {
+  if (props.msg.role !== 'assistant') return false;
+  const list = chatStore.messages;
+  if (list.length === 0) return false;
+  return list[list.length - 1].id === props.msg.id;
+});
+
+const canContinueMessage = computed(() => {
+  return !chatStore.isGenerating && chatStore.sessionStatus === SessionStatus.SS_PAUSED && isVeryLastMessageInChat.value;
+});
 
 const userAvatarText = computed(() => {
   const name = userStore.userInfo?.nickname || userStore.userInfo?.account || 'U';

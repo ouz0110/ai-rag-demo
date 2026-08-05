@@ -26,10 +26,10 @@ else
 fi
 
 echo "=== Stopping Infrastructure Services (Docker Compose) ==="
-if command -v docker-compose >/dev/null 2>&1; then
-    docker-compose down
-elif docker compose version >/dev/null 2>&1; then
-    docker compose down
-fi
+#if command -v docker-compose >/dev/null 2>&1; then
+#    docker-compose down
+#elif docker compose version >/dev/null 2>&1; then
+#    docker compose down
+#fi
 
 echo "=== System Stopped ==="

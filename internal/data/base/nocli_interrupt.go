@@ -127,6 +127,13 @@ func (s *NocliInterruptRepo) UpdateStatus(ctx context.Context, interruptID strin
 	return s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("interrupt_id=?", interruptID).Updates(updates).Error
 }
 
+func (s *NocliInterruptRepo) CancelPendingBySessionID(ctx context.Context, sessionID string) error {
+	updates := map[string]interface{}{
+		"status": pb.InterruptStatus_IS_EXPIRED,
+	}
+	return s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("session_id=? AND status=?", sessionID, pb.InterruptStatus_IS_PENDING).Updates(updates).Error
+}
+
 func (s *NocliInterruptRepo) DeleteBySessionID(ctx context.Context, sessionID string) error {
 	return s.GormDB(ctx).Model(&NocliInterruptModel{}).Where("session_id=?", sessionID).Delete(&NocliInterruptModel{}).Error
 }
