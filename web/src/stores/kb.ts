@@ -222,10 +222,15 @@ export const useKBStore = defineStore('kb', () => {
 
   // 上传文件并解析向量化
   async function uploadFile(file: File, targetKbId?: string): Promise<UploadFileResponse> {
+    const kbIdToUse = targetKbId || activeKbId.value;
+    if (kbIdToUse === 'kb_default_system') {
+      const msg = '默认知识库目前只能项目初始化时处理，禁止通过接口添加';
+      error.value = msg;
+      throw new Error(msg);
+    }
     uploading.value = true;
     error.value = null;
     try {
-      const kbIdToUse = targetKbId || activeKbId.value;
       const res = await uploadDocumentFile(file, kbIdToUse);
       await fetchDocuments(kbIdToUse);
       return res;

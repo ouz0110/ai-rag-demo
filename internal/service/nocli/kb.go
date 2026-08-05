@@ -144,6 +144,12 @@ func (s *KBService) UploadFileHTTP(ctx transHttp.Context) error {
 	defer file.Close()
 
 	kbID := req.FormValue("kb_id")
+	if kbID == "kb_default_system" {
+		return ctx.Result(http.StatusBadRequest, map[string]interface{}{
+			"code":    400,
+			"message": "默认知识库目前只能项目初始化时处理",
+		})
+	}
 
 	// 执行上传与解析向量化
 	docModel, err := s.kbBiz.UploadAndIngestFile(req.Context(), kbID, header.Filename, file)

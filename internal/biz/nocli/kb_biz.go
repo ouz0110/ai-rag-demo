@@ -118,6 +118,9 @@ func (b *KBBiz) UploadAndIngestFile(ctx context.Context, kbID, filename string, 
 	if kbID == "" {
 		return nil, fmt.Errorf("knowledge base id is empty")
 	}
+	if kbID == vector.DefaultKBID || kbID == "kb_default_system" {
+		return nil, fmt.Errorf("默认知识库目前只能项目初始化时处理")
+	}
 	// 校验指定 KB 存在性
 	_, err := b.ragDB.KBRepo.GetKnowledgeBaseByID(ctx, tenantID, kbID)
 	if err != nil {

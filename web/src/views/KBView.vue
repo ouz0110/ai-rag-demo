@@ -37,7 +37,7 @@
         </button>
 
         <button
-          @click="showUploadModal = true"
+          @click="openUploadModal"
           class="px-3.5 py-2 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/20 text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm shadow-cyan-500/10"
         >
           <UploadCloud class="w-4 h-4 text-cyan-400" />
@@ -292,7 +292,7 @@
                     </div>
                     <p class="text-xs text-gray-400 font-medium">当前知识库下无匹配文档</p>
                     <button
-                      @click="showUploadModal = true"
+                      @click="openUploadModal"
                       class="mt-3 text-xs text-cyan-400 hover:text-cyan-300 underline underline-offset-4 cursor-pointer font-semibold"
                     >
                       + 立即上传第一份文档
@@ -441,18 +441,29 @@
 
         <!-- Modal Body -->
         <div class="relative z-10 flex flex-col gap-4">
+          <!-- 默认系统知识库禁止添加警告 -->
+          <div v-if="isDefaultKB" class="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs flex items-center gap-3 font-medium shadow-lg">
+            <AlertCircle class="w-5 h-5 text-amber-400 shrink-0" />
+            <div>
+              <div class="font-bold text-amber-200 text-xs sm:text-sm">禁止通过接口添加文档</div>
+              <div class="text-[11px] text-amber-300/90 mt-0.5">默认知识库 (kb_default_system) 目前只能项目初始化时处理。如需上传，请先在左侧新建或切换至自定义知识库。</div>
+            </div>
+          </div>
+
           <!-- 未选择文件时的 Dropzone -->
           <div
             v-if="!selectedFile && !kbStore.uploading"
-            @dragover.prevent="isDragging = true"
+            @dragover.prevent="!isDefaultKB && (isDragging = true)"
             @dragleave.prevent="isDragging = false"
-            @drop.prevent="handleDrop"
-            @click="triggerFileInput"
+            @drop.prevent="!isDefaultKB && handleDrop($event)"
+            @click="!isDefaultKB && triggerFileInput()"
             :class="[
-              'border-2 border-dashed rounded-2xl p-6 text-center transition-all cursor-pointer relative overflow-hidden group',
-              isDragging
-                ? 'border-cyan-400 bg-cyan-500/15 shadow-xl shadow-cyan-500/20 scale-[1.01]'
-                : 'border-white/15 bg-white/[0.02] hover:border-cyan-500/50 hover:bg-cyan-500/[0.04]'
+              'border-2 border-dashed rounded-2xl p-6 text-center transition-all relative overflow-hidden group',
+              isDefaultKB
+                ? 'border-amber-500/30 bg-amber-500/5 cursor-not-allowed opacity-60'
+                : isDragging
+                  ? 'border-cyan-400 bg-cyan-500/15 shadow-xl shadow-cyan-500/20 scale-[1.01] cursor-pointer'
+                  : 'border-white/15 bg-white/[0.02] hover:border-cyan-500/50 hover:bg-cyan-500/[0.04] cursor-pointer'
             ]"
           >
             <input
@@ -603,8 +614,8 @@
             <button
               v-if="selectedFile"
               @click="startUploadSelectedFile"
-              :disabled="kbStore.uploading"
-              class="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-semibold text-xs transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 cursor-pointer flex items-center gap-2"
+              :disabled="kbStore.uploading || isDefaultKB"
+              class="px-5 py-2 rounded-xl bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-white font-semibold text-xs transition-all shadow-lg shadow-cyan-500/25 hover:shadow-cyan-500/40 cursor-pointer flex items-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <RefreshCw v-if="kbStore.uploading" class="w-3.5 h-3.5 animate-spin" />
               <span>开始向量化构建</span>
@@ -914,6 +925,10 @@ import {
 
 const kbStore = useKBStore();
 
+const isDefaultKB = computed(() => {
+  return kbStore.activeKbId === 'kb_default_system' || !!kbStore.activeKB?.is_default;
+});
+
 const showCreateModal = ref(false);
 const showUploadModal = ref(false);
 const newKbName = ref('');
@@ -1072,12 +1087,28 @@ function openDocDetail(doc: KnowledgeDocument) {
   };
 }
 
+function openUploadModal() {
+  uploadErrorMsg.value = '';
+  if (isDefaultKB.value) {
+    uploadErrorMsg.value = '默认知识库 (kb_default_system) 目前只能项目初始化时处理，禁止通过接口添加';
+  }
+  showUploadModal.value = true;
+}
+
 function triggerFileInput() {
+  if (isDefaultKB.value) {
+    uploadErrorMsg.value = '默认知识库 (kb_default_system) 目前只能项目初始化时处理，禁止通过接口添加';
+    return;
+  }
   fileInputRef.value?.click();
 }
 
 function handleDrop(e: DragEvent) {
   isDragging.value = false;
+  if (isDefaultKB.value) {
+    uploadErrorMsg.value = '默认知识库 (kb_default_system) 目前只能项目初始化时处理，禁止通过接口添加';
+    return;
+  }
   const files = e.dataTransfer?.files;
   if (files && files.length > 0) {
     selectedFile.value = files[0];
@@ -1086,6 +1117,10 @@ function handleDrop(e: DragEvent) {
 }
 
 function handleFileSelected(e: Event) {
+  if (isDefaultKB.value) {
+    uploadErrorMsg.value = '默认知识库 (kb_default_system) 目前只能项目初始化时处理，禁止通过接口添加';
+    return;
+  }
   const target = e.target as HTMLInputElement;
   if (target.files && target.files.length > 0) {
     selectedFile.value = target.files[0];
@@ -1109,6 +1144,10 @@ function closeUploadModal() {
 
 async function startUploadSelectedFile() {
   if (!selectedFile.value) return;
+  if (isDefaultKB.value) {
+    uploadErrorMsg.value = '默认知识库目前只能项目初始化时处理，禁止通过接口添加';
+    return;
+  }
   uploadErrorMsg.value = '';
   uploadSuccessMsg.value = '';
   try {
