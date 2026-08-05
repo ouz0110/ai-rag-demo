@@ -165,10 +165,6 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		Fetcher:   fetcher,
 	})
 
-	if err != nil {
-		return "", fmt.Errorf("子 Agent %s 执行失败: %v", t.targetAgent.Name(), err)
-	}
-
 	subDurationMS := time.Since(subAgentStart).Milliseconds()
 	if subDurationMS <= 0 {
 		subDurationMS = 1
@@ -190,6 +186,7 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		}
 	}
 
+	// 🎯 优先处理 Checkpoint 归档保存 (不论是 Pause 停止、Cancel 还是 Interrupt 审批)
 	if loopRes != nil && (loopRes.Status == pb.SessionStatus_SS_PAUSED || errors.Is(err, context.Canceled) || ctx.Err() != nil) {
 		log.Infow(ctx, "sub_agent_paused_saving_checkpoint", "target_agent", t.targetAgent.Name(), "sub_msgs_count", len(loopRes.Messages))
 
@@ -225,7 +222,11 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 			CreatedAt:     time.Now().Unix(),
 		}
 		if store := t.CheckpointStore(); store != nil {
-			_ = store.Save(ctx, cp)
+			if saveErr := store.Save(ctx, cp); saveErr != nil {
+				log.Errorw(ctx, "sub_agent_save_checkpoint_failed", "session_id", cp.SessionID, "error", saveErr)
+			} else {
+				log.Infow(ctx, "sub_agent_save_checkpoint_success", "session_id", cp.SessionID, "target_agent", cp.TargetAgentName)
+			}
 		}
 	}
 
@@ -276,10 +277,21 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 			CreatedAt:     time.Now().Unix(),
 		}
 		if store := t.CheckpointStore(); store != nil {
-			_ = store.Save(ctx, cp)
+			if saveErr := store.Save(ctx, cp); saveErr != nil {
+				log.Errorw(ctx, "sub_agent_save_checkpoint_failed", "session_id", cp.SessionID, "error", saveErr)
+			} else {
+				log.Infow(ctx, "sub_agent_save_checkpoint_success", "session_id", cp.SessionID, "target_agent", cp.TargetAgentName)
+			}
 		}
 
 		return "", openaierr.NewInterruptErr(fmt.Sprintf("子 Agent %s 触发指令授权审批中断", t.targetAgent.Name()))
+	}
+
+	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return "【工具执行已中断】: 用户手动取消了本次工具调用。", nil
+		}
+		return "", fmt.Errorf("子 Agent %s 执行失败: %v", t.targetAgent.Name(), err)
 	}
 
 	log.Debugw(ctx, "agent_tool_completed", "target_agent", t.targetAgent.Name(), "reply_len", len(loopRes.Reply))

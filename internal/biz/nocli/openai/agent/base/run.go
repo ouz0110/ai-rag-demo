@@ -20,6 +20,9 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 	}
 
 	sessionID := opts.SessionID
+	if sessionID != "" && ctx.Value(ParentSessionIDKey) == nil {
+		ctx = context.WithValue(ctx, ParentSessionIDKey, sessionID)
+	}
 	messages := b.EnhanceRuntimeMessages(ctx, opts.Messages)
 	model := b.Model()
 	tools := b.Tools()

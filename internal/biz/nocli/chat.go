@@ -74,14 +74,14 @@ func (s *ChatBiz) StopSession(ctx context.Context, req *pb.StopSessionRequest) (
 				cancel()
 				if kStr, okStr := key.(string); okStr {
 					s.activeCancels.Delete(kStr)
-					_ = s.sessionMgr.CleanOrCancelPendingInterrupts(ctx, kStr)
+					_ = s.allDb.Base.NocliInterruptRepo.CancelPendingBySessionID(ctx, kStr)
 					log.Infow(ctx, "stop_session_active_cancel_fallback_triggered", "fallback_session_id", kStr)
 				}
 			}
 			return true
 		})
 	} else {
-		_ = s.sessionMgr.CleanOrCancelPendingInterrupts(ctx, sessionID)
+		_ = s.allDb.Base.NocliInterruptRepo.CancelPendingBySessionID(ctx, sessionID)
 	}
 
 	// 🎯 将数据库中该 Session 的状态显式置为 SS_PAUSED (暂停/支持继续生成)
