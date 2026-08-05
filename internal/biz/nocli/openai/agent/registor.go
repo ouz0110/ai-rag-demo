@@ -3,6 +3,7 @@ package agent
 import (
 	"sync"
 
+	"ai-rag-demo/internal/biz/nocli/checkpoint"
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	"ai-rag-demo/internal/biz/nocli/openai/tool"
@@ -69,4 +70,12 @@ func (r *Registry) List() []base.IAgent {
 		list = append(list, ag)
 	}
 	return list
+}
+
+func (r *Registry) SetCheckpointStore(store checkpoint.ICheckpointStore) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ag := range r.agents {
+		ag.SetCheckpointStore(store)
+	}
 }

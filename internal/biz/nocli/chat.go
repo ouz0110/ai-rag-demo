@@ -117,6 +117,7 @@ func NewChatBiz(
 	agentReg := agent.NewRegistry(cfg, openaiChatModel, skillMgr, mcpMgr, vectorEngine)
 
 	sessionMgr := session.NewSessionManager(allDb, cfg, agentReg)
+	agentReg.SetCheckpointStore(sessionMgr.CheckpointStore())
 
 	var compressCfg *conf.OpenAIContextCompressConfig
 	if cfg != nil && cfg.Source.OpenAI != nil {
@@ -197,7 +198,7 @@ func parseAgentToolOptions(pbOpts *pb.AgentToolOptions) agentbase.AgentToolOptio
 	}
 }
 
-func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill, enableMCP, enableRerank bool, agentOpts agentbase.AgentToolOptions, messages []openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
+func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, kbID string, enableRAG, enableSkill, enableMCP, enableRerank bool, agentOpts agentbase.AgentToolOptions, approvedTools map[string]bool, rejectedTools map[string]string, messages []openai.ChatCompletionMessage, emitter agentbase.StreamEmitter) context.Context {
 	if kbTenantID == "" {
 		kbTenantID = vector.DefaultTenantID
 	}
@@ -223,6 +224,8 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 		EnableMCP:        enableMCP,
 		EnableRerank:     enableRerank,
 		AgentToolOptions: agentOpts,
+		ApprovedTools:    approvedTools,
+		RejectedTools:    rejectedTools,
 		Messages:         messages,
 		SubMsgBuffer:     &subBuffer,
 		PendingToolCall:  &pendingCall,
@@ -234,9 +237,6 @@ func (s *ChatBiz) withParentContext(ctx context.Context, sessionID, kbTenantID, 
 		pc.Emitter = emitter
 	}
 	parentCtx := pc.Inject(ctx)
-	parentCtx = context.WithValue(parentCtx, agentbase.SubAgentCheckpointSaverKey, func(cp *agentbase.SubAgentCheckpoint) {
-		s.sessionMgr.SaveSubAgentCheckpoint(sessionID, cp)
-	})
 	return parentCtx
 }
 
@@ -265,7 +265,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 
 	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
 	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
-	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, nil)
+	ctx = s.withParentContext(ctx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, approvedTools, nil, messages, nil)
 	start := time.Now()
 	fetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(ctx, &agentbase.RunOptions{
@@ -338,7 +338,7 @@ func (s *ChatBiz) Resume(ctx context.Context, req *pb.ResumeRequest) (*pb.Stream
 
 	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
 	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, nil)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, approvedTools, rejectedTools, messages, nil)
 
 	// 🎯 优先尝试从子 Agent 专属 Checkpoint 秒级快速恢复执行
 	subLoopRes, subResumed, subErr := s.trySubAgentCheckpointResume(ctx, req, approvedTools, rejectedTools, nil)

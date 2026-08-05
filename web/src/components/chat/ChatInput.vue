@@ -21,7 +21,7 @@
           </button>
 
           <div class="shortcut-hint">
-            <span class="hint-key">Shift + Enter</span> 换行 <span class="divider">|</span> <span class="hint-key">Enter</span> 发送
+            <span class="hint-key">Enter</span> 换行 <span class="divider">|</span> <span class="hint-key">Shift + Enter</span> 发送
           </div>
         </div>
       </div>
@@ -33,7 +33,7 @@
           rows="2"
           placeholder="给 AI-RAG Agent 发送消息... (支持 Markdown 提问、代码重构、RAG 向量检索与敏感工具授权处理)"
           class="chat-textarea"
-          @keydown.enter.exact.prevent="handleSend"
+          @keydown.shift.enter.prevent="handleSend"
         ></textarea>
       </div>
 

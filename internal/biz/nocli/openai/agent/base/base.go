@@ -1,6 +1,7 @@
 package base
 
 import (
+	"ai-rag-demo/internal/biz/nocli/checkpoint"
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli/openai/tool"
 	"ai-rag-demo/internal/conf"
@@ -16,14 +17,26 @@ import (
 
 // BaseAgent 通用 Agent 基础结构体，提供核心 ReAct 循环、Tool 执行与 Stream Fetcher 能力
 type BaseAgent struct {
-	name          string
-	cfg           *conf.Config
-	toolRegistry  *tool.Registry
-	skillMgr      *skill.Manager
-	mcpMgr        mcp.Manager
-	maxIterations int
-	tools         []openai.Tool
-	model         string
+	name            string
+	cfg             *conf.Config
+	toolRegistry    *tool.Registry
+	skillMgr        *skill.Manager
+	mcpMgr          mcp.Manager
+	maxIterations   int
+	tools           []openai.Tool
+	model           string
+	checkpointStore checkpoint.ICheckpointStore
+}
+
+func (b *BaseAgent) SetCheckpointStore(store checkpoint.ICheckpointStore) {
+	b.checkpointStore = store
+	if b.toolRegistry != nil {
+		b.toolRegistry.SetCheckpointStore(store)
+	}
+}
+
+func (b *BaseAgent) CheckpointStore() checkpoint.ICheckpointStore {
+	return b.checkpointStore
 }
 
 func (b *BaseAgent) Name() string {

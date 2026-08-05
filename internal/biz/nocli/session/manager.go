@@ -46,6 +46,10 @@ func (m *SessionManager) SetCheckpointStore(store checkpoint.ICheckpointStore) {
 	}
 }
 
+func (m *SessionManager) CheckpointStore() checkpoint.ICheckpointStore {
+	return m.checkpointStore
+}
+
 func (m *SessionManager) SaveSubAgentCheckpoint(sessionID string, cp *agentbase.SubAgentCheckpoint) {
 	if sessionID == "" || cp == nil {
 		return

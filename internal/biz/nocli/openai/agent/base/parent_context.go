@@ -26,6 +26,8 @@ const (
 	ParentToolDurationsKey    = "parent_tool_durations"
 	ParentKBNameKey            = "parent_kb_name"
 	ParentKBDescriptionKey     = "parent_kb_description"
+	ParentApprovedToolsKey     = "parent_approved_tools"
+	ParentRejectedToolsKey     = "parent_rejected_tools"
 )
 
 type AgentToolOptions = checkpoint.AgentToolOptions
@@ -41,6 +43,8 @@ type ParentContext struct {
 	EnableMCP        bool
 	EnableRerank     bool
 	AgentToolOptions AgentToolOptions
+	ApprovedTools    map[string]bool
+	RejectedTools    map[string]string
 	Messages         []openai.ChatCompletionMessage
 	SubMsgBuffer     *[]openai.ChatCompletionMessage
 	PendingToolCall  **pb.PendingToolCall
@@ -77,6 +81,12 @@ func (pc *ParentContext) Inject(ctx context.Context) context.Context {
 	}
 	if pc.Emitter != nil {
 		ctx = context.WithValue(ctx, ParentEmitterKey, pc.Emitter)
+	}
+	if pc.ApprovedTools != nil {
+		ctx = context.WithValue(ctx, ParentApprovedToolsKey, pc.ApprovedTools)
+	}
+	if pc.RejectedTools != nil {
+		ctx = context.WithValue(ctx, ParentRejectedToolsKey, pc.RejectedTools)
 	}
 	return ctx
 }

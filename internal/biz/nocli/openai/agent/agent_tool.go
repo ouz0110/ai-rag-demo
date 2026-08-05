@@ -3,11 +3,13 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	"ai-rag-demo/internal/biz/nocli/checkpoint"
 	"ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	openaierr "ai-rag-demo/internal/biz/nocli/openai/error"
@@ -24,17 +26,36 @@ type AgentToolOptions = base.AgentToolOptions
 
 // AgentTool 将任意 IAgent 包装为一个标准的 Tool 供 MainAgent 调度
 type AgentTool struct {
-	targetAgent base.IAgent
-	chatModel   *chatmodel.ChatModel
-	opts        AgentToolOptions
+	targetAgent     base.IAgent
+	chatModel       *chatmodel.ChatModel
+	opts            AgentToolOptions
+	checkpointStore checkpoint.ICheckpointStore
+}
+
+func (t *AgentTool) SetCheckpointStore(store checkpoint.ICheckpointStore) {
+	t.checkpointStore = store
+}
+
+func (t *AgentTool) CheckpointStore() checkpoint.ICheckpointStore {
+	if t.checkpointStore != nil {
+		return t.checkpointStore
+	}
+	if t.targetAgent != nil {
+		return t.targetAgent.CheckpointStore()
+	}
+	return nil
 }
 
 func NewAgentTool(targetAgent base.IAgent, chatModel *chatmodel.ChatModel, opts AgentToolOptions) *AgentTool {
-	return &AgentTool{
+	tool := &AgentTool{
 		targetAgent: targetAgent,
 		chatModel:   chatModel,
 		opts:        opts,
 	}
+	if targetAgent != nil {
+		tool.checkpointStore = targetAgent.CheckpointStore()
+	}
+	return tool
 }
 
 func (t *AgentTool) RequiresApproval(ctx context.Context, argsJSON string) bool {
@@ -169,7 +190,46 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		}
 	}
 
-	if loopRes.Status == pb.SessionStatus_SS_INTERRUPTED {
+	if loopRes != nil && (loopRes.Status == pb.SessionStatus_SS_PAUSED || errors.Is(err, context.Canceled) || ctx.Err() != nil) {
+		log.Infow(ctx, "sub_agent_paused_saving_checkpoint", "target_agent", t.targetAgent.Name(), "sub_msgs_count", len(loopRes.Messages))
+
+		parentToolCallID, _ := ctx.Value(base.ParentToolCallIDKey).(string)
+		kbTenantID, _ := ctx.Value(base.ParentKBTenantIDKey).(string)
+		kbID, _ := ctx.Value(base.ParentKBIDKey).(string)
+		enableRAG, _ := ctx.Value(base.ParentEnableRAGKey).(bool)
+		enableSkill, _ := ctx.Value(base.ParentEnableSkillKey).(bool)
+		enableMCP, _ := ctx.Value(base.ParentEnableMCPKey).(bool)
+		enableRerank, _ := ctx.Value(base.ParentEnableRerankKey).(bool)
+		approvedTools, _ := ctx.Value(base.ParentApprovedToolsKey).(map[string]bool)
+		rejectedTools, _ := ctx.Value(base.ParentRejectedToolsKey).(map[string]string)
+
+		// 🎯 构造并保存子 Agent 专属 Pause Checkpoint 快照 (供恢复时从断点秒级续跑)
+		cp := &base.SubAgentCheckpoint{
+			SessionID:        sessionID,
+			TargetAgentName:  t.targetAgent.Name(),
+			ParentToolCallID: parentToolCallID,
+			SubMessages:      loopRes.Messages,
+			AgentToolOptions: base.AgentToolOptions{
+				PassFullContextToSubAgent: opts.PassFullContextToSubAgent,
+				ReturnFullContextToParent: opts.ReturnFullContextToParent,
+				StreamSubAgentExecution:   opts.StreamSubAgentExecution,
+			},
+			KBTenantID:    kbTenantID,
+			KBID:          kbID,
+			EnableRAG:     enableRAG,
+			EnableSkill:   enableSkill,
+			EnableMCP:     enableMCP,
+			EnableRerank:  enableRerank,
+			ApprovedTools: approvedTools,
+			RejectedTools: rejectedTools,
+			CreatedAt:     time.Now().Unix(),
+		}
+		if store := t.CheckpointStore(); store != nil {
+			_ = store.Save(ctx, cp)
+		}
+	}
+
+	if loopRes != nil && loopRes.Status == pb.SessionStatus_SS_INTERRUPTED {
 		log.Infow(ctx, "sub_agent_interrupted_saving_checkpoint", "target_agent", t.targetAgent.Name(), "pending_tools_count", len(loopRes.PendingToolCalls))
 		var pendingCall *pb.PendingToolCall
 		if len(loopRes.PendingToolCalls) > 0 {
@@ -189,6 +249,8 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		enableSkill, _ := ctx.Value(base.ParentEnableSkillKey).(bool)
 		enableMCP, _ := ctx.Value(base.ParentEnableMCPKey).(bool)
 		enableRerank, _ := ctx.Value(base.ParentEnableRerankKey).(bool)
+		approvedTools, _ := ctx.Value(base.ParentApprovedToolsKey).(map[string]bool)
+		rejectedTools, _ := ctx.Value(base.ParentRejectedToolsKey).(map[string]string)
 
 		// 🎯 构造并保存子 Agent 专属 Checkpoint 快照 (包含全部上游配置与 ParentToolCallID)
 		cp := &base.SubAgentCheckpoint{
@@ -203,16 +265,18 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 				ReturnFullContextToParent: opts.ReturnFullContextToParent,
 				StreamSubAgentExecution:   opts.StreamSubAgentExecution,
 			},
-			KBTenantID:   kbTenantID,
-			KBID:         kbID,
-			EnableRAG:    enableRAG,
-			EnableSkill:  enableSkill,
-			EnableMCP:    enableMCP,
-			EnableRerank: enableRerank,
-			CreatedAt:    time.Now().Unix(),
+			KBTenantID:    kbTenantID,
+			KBID:          kbID,
+			EnableRAG:     enableRAG,
+			EnableSkill:   enableSkill,
+			EnableMCP:     enableMCP,
+			EnableRerank:  enableRerank,
+			ApprovedTools: approvedTools,
+			RejectedTools: rejectedTools,
+			CreatedAt:     time.Now().Unix(),
 		}
-		if saver, ok := ctx.Value(base.SubAgentCheckpointSaverKey).(func(*base.SubAgentCheckpoint)); ok && saver != nil {
-			saver(cp)
+		if store := t.CheckpointStore(); store != nil {
+			_ = store.Save(ctx, cp)
 		}
 
 		return "", openaierr.NewInterruptErr(fmt.Sprintf("子 Agent %s 触发指令授权审批中断", t.targetAgent.Name()))

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	"ai-rag-demo/internal/biz/nocli/checkpoint"
 	chatmodel "ai-rag-demo/internal/biz/nocli/openai/chat_model"
 	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	dataBase "ai-rag-demo/internal/data/base"
@@ -61,4 +62,6 @@ type IAgent interface {
 	Run(ctx context.Context, opts *RunOptions) (*LoopResult, error)
 	GetStreamFetcher(sessionID string, chatModel *chatmodel.ChatModel, emitter StreamEmitter) MessageFetcher
 	GetSyncFetcher(chatModel *chatmodel.ChatModel) MessageFetcher
+	SetCheckpointStore(store checkpoint.ICheckpointStore)
+	CheckpointStore() checkpoint.ICheckpointStore
 }

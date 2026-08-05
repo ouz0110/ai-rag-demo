@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -123,8 +124,13 @@ func (b *BaseAgent) ProcessToolCalls(
 					break
 				}
 			}
-			toolResult = fmt.Sprintf("工具执行失败: %v", err)
-			log.Debugw(ctx, "tool_result_error", append(baseFields, "tool_id", toolID, "tool_name", toolName, "error", err, "duration_ms", toolDuration)...)
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil || strings.Contains(err.Error(), "context canceled") {
+				toolResult = "【工具执行已中断】: 用户手动取消了本次工具调用。"
+				log.Infow(ctx, "tool_execution_canceled_by_user", append(baseFields, "tool_id", toolID, "tool_name", toolName)...)
+			} else {
+				toolResult = fmt.Sprintf("工具执行失败: %v", err)
+				log.Debugw(ctx, "tool_result_error", append(baseFields, "tool_id", toolID, "tool_name", toolName, "error", err, "duration_ms", toolDuration)...)
+			}
 		} else {
 			log.Debugw(ctx, "tool_result_success", append(baseFields, "tool_id", toolID, "tool_name", toolName, "result_len", len(toolResult), "duration_ms", toolDuration)...)
 		}

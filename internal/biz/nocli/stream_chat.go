@@ -35,6 +35,26 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 			return fmt.Errorf("继续生成请求所对应的会话不存在或未提供有效的 session_id")
 		}
 		sessionID = req.SessionId
+
+		// 🎯 优先尝试无缝唤醒子 Agent 的 Pause Checkpoint 秒级断点续跑
+		subLoopRes, subResumed, subErr := s.trySubAgentCheckpointResume(ctx, &pb.ResumeRequest{
+			SessionId:        sessionID,
+			EnableRag:        req.EnableRag,
+			EnableSkill:      req.EnableSkill,
+			EnableMcp:        req.EnableMcp,
+			EnableRerank:     req.EnableRerank,
+			KbTenantId:       req.KbTenantId,
+			KbId:             req.KbId,
+			AgentToolOptions: req.AgentToolOptions,
+		}, nil, nil, emitter)
+		if subErr != nil {
+			return subErr
+		}
+		if subResumed && subLoopRes != nil && subLoopRes.Status == pb.SessionStatus_SS_INTERRUPTED {
+			log.Infow(ctx, "stream_completion_sub_agent_interrupted_again", "session_id", sessionID)
+			return nil
+		}
+
 		messages, err = s.sessionMgr.LoadHistoryForLLM(ctx, sessionID)
 		if err != nil {
 			return fmt.Errorf("读取历史以继续生成失败: %w", err)
@@ -98,7 +118,7 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 
 	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
 	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
-	runCtx = s.withParentContext(runCtx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, emitter)
+	runCtx = s.withParentContext(runCtx, sessionID, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, approvedTools, nil, messages, emitter)
 	fetcher := ag.GetStreamFetcher(sessionID, s.openaiChatModel, emitter)
 	syncFetcher := ag.GetSyncFetcher(s.openaiChatModel)
 	loopRes, err := ag.Run(runCtx, &agentbase.RunOptions{
@@ -186,7 +206,7 @@ func (s *ChatBiz) StreamResume(ctx context.Context, req *pb.ResumeRequest, emitt
 
 	finalRAG, finalSkill, finalMCP, finalRerank := resolveEnableFlags(s.cfg, req.EnableRag, req.EnableSkill, req.EnableMcp, req.EnableRerank)
 	agentOpts := parseAgentToolOptions(req.AgentToolOptions)
-	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, messages, emitter)
+	ctx = s.withParentContext(ctx, req.SessionId, req.KbTenantId, req.KbId, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, approvedTools, rejectedTools, messages, emitter)
 
 	// 🎯 优先尝试从子 Agent 专属 Checkpoint 秒级快速恢复执行
 	subLoopRes, subResumed, subErr := s.trySubAgentCheckpointResume(ctx, req, approvedTools, rejectedTools, emitter)
@@ -357,8 +377,22 @@ func (s *ChatBiz) trySubAgentCheckpointResume(
 		}
 	}
 
+	if approvedTools == nil {
+		approvedTools = make(map[string]bool)
+	}
+	for k, v := range cp.ApprovedTools {
+		approvedTools[k] = v
+	}
+
+	if rejectedTools == nil {
+		rejectedTools = make(map[string]string)
+	}
+	for k, v := range cp.RejectedTools {
+		rejectedTools[k] = v
+	}
+
 	// 🎯 确保 withParentContext 被注入 context
-	ctx = s.withParentContext(ctx, req.SessionId, kbTenantID, kbID, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, cp.SubMessages, emitter)
+	ctx = s.withParentContext(ctx, req.SessionId, kbTenantID, kbID, finalRAG, finalSkill, finalMCP, finalRerank, agentOpts, approvedTools, rejectedTools, cp.SubMessages, emitter)
 
 	subEmitter := func(chunk *pb.StreamChunk) {
 		if chunk != nil {
@@ -425,6 +459,8 @@ func (s *ChatBiz) trySubAgentCheckpointResume(
 			EnableSkill:      finalSkill,
 			EnableMCP:        finalMCP,
 			EnableRerank:     finalRerank,
+			ApprovedTools:    approvedTools,
+			RejectedTools:    rejectedTools,
 			CreatedAt:        time.Now().Unix(),
 		}
 		s.sessionMgr.SaveSubAgentCheckpoint(req.SessionId, newCp)

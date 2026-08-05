@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"ai-rag-demo/internal/biz/nocli/checkpoint"
 	mcptool "ai-rag-demo/internal/biz/nocli/openai/tool/mcp_tool"
 	"ai-rag-demo/internal/biz/nocli/vector"
 	"ai-rag-demo/internal/conf"
@@ -118,4 +119,19 @@ func (r *Registry) RequiresApproval(ctx context.Context, name, argsJSON string) 
 		return false
 	}
 	return t.RequiresApproval(ctx, argsJSON)
+}
+
+type CheckpointStoreSetter interface {
+	SetCheckpointStore(checkpoint.ICheckpointStore)
+}
+
+func (r *Registry) SetCheckpointStore(store checkpoint.ICheckpointStore) {
+	if r == nil {
+		return
+	}
+	for _, t := range r.tools {
+		if setter, ok := t.(CheckpointStoreSetter); ok {
+			setter.SetCheckpointStore(store)
+		}
+	}
 }

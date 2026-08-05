@@ -30,6 +30,8 @@ type SubAgentCheckpoint struct {
 	EnableSkill      bool                           `json:"enable_skill"`
 	EnableMCP        bool                           `json:"enable_mcp"`
 	EnableRerank     bool                           `json:"enable_rerank"`
+	ApprovedTools    map[string]bool                `json:"approved_tools"`
+	RejectedTools    map[string]string              `json:"rejected_tools"`
 	CreatedAt        int64                          `json:"created_at"`
 }
 

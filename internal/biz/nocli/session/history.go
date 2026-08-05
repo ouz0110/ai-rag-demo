@@ -108,7 +108,7 @@ func FilterSubAgentMessagesForLLM(msgs []openai.ChatCompletionMessage) []openai.
 	filtered := make([]openai.ChatCompletionMessage, 0, len(msgs))
 	for _, m := range msgs {
 		// 如果消息明确标记为子 Agent 的 Name (如 "file_analyzer", "rag_agent" 等且非 "main")，在发给 LLM 时予以排除
-		if m.Name != "" && m.Name != "main" {
+		if m.Name != "" && m.Name != "main" && m.Role != openai.ChatMessageRoleUser {
 			continue
 		}
 		filtered = append(filtered, m)
@@ -133,6 +133,9 @@ func (m *SessionManager) PrepareMessagesForCompletion(ctx context.Context, sessi
 	}
 
 	newMessageStart := len(messages)
+	if newMessageStart == 1 {
+		newMessageStart = 0
+	}
 	userMsgStruct := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleUser,
 		Content: userMsg,
