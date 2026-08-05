@@ -31,16 +31,30 @@
   - **Main Agent**: 智能意图路由与调度中心。
   - **RAG Agent**: 专门负责知识库精准问答与依据归因。
   - **File Analyzer Agent**: 针对上传文件的深度结构化分析与摘要提取。
+  - **AgentTool 级联抽象 (`agent_tool.go`)**: 将 Agent 统一封装为标准 Tool，实现 Agent 间的递归调用与任务委派。
 - **MCP (Model Context Protocol) 标准集成**: 基于 `mark3labs/mcp-go`，无缝接入第三方 MCP 工具与外部上下文资源。
 - **Skills 动态扩展管理 (`internal/pkg/skill`)**: 支持动态扫描与运行自定义本地/远程技能，让 Agent 具备按需调用工具的能力。
-- **内置丰富工具箱 (`openai/tool`)**: 包含终端命令执行 (`terminal`)、文件读写 (`read_files`/`list_files`)、RAG 检索 (`rag`)、Skill 加载 (`load_load_skill`) 及 MCP 工具调配。
+- **内置丰富工具箱 (`openai/tool`)**: 包含终端命令执行 (`terminal`)、文件读写 (`read_files`/`list_files`)、RAG 检索 (`rag`)、Skill 加载 (`load_skill`) 及 MCP 动态工具封装 (`mcp_tool`)。
 
-### 3. 上下文控制与性能优化
+### 3. Human-in-the-Loop (HITL) 人工介入与安全审批控制
+- **高危工具授权策略 (`session/approved_tools.go`)**: 支持 `AS_ALWAYS` (永久授权)、`AS_SESSION_TOOL` (单会话授权) 与拒绝机制。当 Agent 尝试调用敏感命令（如 `terminal` 命令或写操作）时自动阻断并触发 `SS_INTERRUPTED` 状态。
+- **中断与断点恢复 (`stream_chat.go`)**: 任务挂起后，支持用户选择同意（Approve）或拒绝（Reject）并通过 `StreamResume` / `ResumeCompletion` 实现秒级断点恢复执行。
+- **新 Prompt 智能解理**: 若用户在审批等待期间发送全新 Prompt，系统能够智能清理/撤销原挂起中断并顺畅收尾消息链。
+
+### 4. SubAgent Checkpoint 快照与秒级续跑引擎 (`checkpoint`)
+- **轻量级快照存储 (`checkpoint/checkpoint.go`)**: 子 Agent 触发中断时，实时捕获并持久化局部上下文 (`SubMessages`)、Pending Tool Call、控制选项 (`AgentToolOptions`)、知识库/技能开关及已授权白名单。
+- **秒级精确唤醒 (`trySubAgentCheckpointResume`)**: 恢复时优先激活对应子 Agent 的 Checkpoint 快照秒级续跑，规避父 Agent 全量重新调度，降低响应延迟与 Token 成本。
+
+### 5. 上下文控制、主动打断与性能优化
 - **长文本上下文压缩器 (`openai/compressor`)**: 自动评估多轮对话 Token 消耗，使用摘要压缩策略优化上下文窗口，降低 LLM 调用成本并防超限。
 - **流式增量打字机 (`stream_chat.go`)**: 支持 SSE (Server-Sent Events) 与 HTTP/gRPC 流式响应，提供毫秒级首字延迟与流畅交互。
-- **会话持久化 (`session`)**: 提供完整的会话状态管理与历史对话追溯功能。
+- **主动任务打断与接续生成 (`chat.go`)**:
+  - **任务中断 (`StopSession`)**: 基于 `activeCancels` 句柄提供优雅的会话级打断控制，安全将任务切换至 `SS_PAUSED` 状态。
+  - **接续生成 (`IsContinue`)**: 自动从中断或未完成的 Assistant 输出末尾接续往下生成，保障长文本输出的连续性。
+- **脱钩落盘安全保护 (`context.WithoutCancel`)**: 即使客户端中途切断 HTTP/SSE 连接，后台仍借助独立超时上下文保障对话记录与工具耗时 100% 完整安全落盘。
+- **细粒度耗时归因与配额记账 (`common/usage.go`)**: 实时记录各工具耗时 (`ToolDurations`)，并实现 Prompt/Completion/Embedding Token 的统一计量与并发扣费。
 
-### 4. 商业化与微服务基础设施
+### 6. 商业化与微服务基础设施
 - **账户与权限管理 (`base/accounts.go`)**: 支持用户注册、登录、JWT 认证、多租户隔离及 OpenID 绑定。
 - **Token 消耗与计费 (`base/billing.go`)**: 实时统计 LLM / RAG / Embedding 的 Token 消耗与额度扣减。
 - **微服务治理**: 支持 Nacos 服务注册与发现、配置动态加载、Google Wire 依赖注入。
@@ -76,13 +90,15 @@ configs/              # 配置文件 (YAML / Nacos)
 internal/
 ├── biz/              # ⭐️ 核心业务逻辑层 (领域编排，禁跨包调用)
 │   ├── base/         # 基础业务：账号管理 (accounts.go)、计费管控 (billing.go)
-│   ├── common/       # 共享业务逻辑与配额 Usage 统计 (usage.go)
+│   ├── common/       # 共享业务逻辑与配额 Usage 统一记录 (usage.go)
 │   └── nocli/        # 核心 AI 与 RAG 领域引擎
-│       ├── openai/   # Agent 注册、ChatModel、工具箱 (tool) 与上下文压缩 (compressor)、AgentTool
-│       ├── vector/   # RAG 检索增强引擎：文档解析(parser)、切块(chunker)、向量化(embedder)、存储(store)、重排序(rerank)
-│       ├── session/  # 多轮对话与会话历史持久化
+│       ├── checkpoint/# SubAgent 中断快照存储 (checkpoint.go, memory_store.go)
+│       ├── session/  # 会话历史持久化、已授权工具白名单 (approved_tools.go, manager.go)
+│       ├── vector/   # Advanced RAG 向量引擎 (parser, chunker, embedder, store, rerank, retriever)
+│       ├── openai/   # 多 Agent 协同 (agent)、工具箱 (tool)、ChatModel 与长文本压缩 (compressor)
 │       ├── kb_biz.go # 知识库 CRUD 与文件向量构建流水线
-│       └── chat.go   # 问答编排与流式响应逻辑
+│       ├── chat.go   # 问答编排、主动中断控制 (StopSession)
+│       └── stream_chat.go # 打字机 SSE/gRPC 流式响应、HITL 审批恢复与断点接续
 ├── data/             # 数据持久化层 (GORM DB CRUD, Milvus Adapter)
 ├── cache/            # 缓存层 (Redis & 分布式锁)
 ├── external/         # 外部服务集成 (MCP Manager, RPC Proxy)
@@ -99,10 +115,16 @@ internal/
    - 遵守 **跨 Biz 调用禁令**，共享逻辑统一下沉至 `biz/common`，确保业务模块间高内聚、低耦合。
 2. **高级 RAG 策略组合**:
    - 不止于简单的 Vector Search，引入**语义切块 + 父子层级切分 + 混合召回 + 重排序 (Rerank)** 的完整 Advanced RAG 链条，大幅提升特定领域问答质量。
-3. **扩展性极强 (MCP & Skills)**:
+3. **Human-in-the-Loop (HITL) 与 SubAgent Checkpoint**:
+   - 对敏感高危操作提供可可控的人工确认机制 (`SS_INTERRUPTED`)；
+   - 结合子 Agent Checkpoint 快照存储，恢复授权时可实现秒级精准断点续跑，跳过全量重新调度。
+4. **扩展性极强 (MCP & Skills)**:
    - 引入 Anthropic 主导的 **MCP (Model Context Protocol)** 标准，支持灵活连接上下文数据源；
    - 自研 **Skills 管理器**，支持本地动态扫描与按需加载能力插件。
-4. **安全与鲁棒性防护**:
+5. **任务优雅控制与脱钩落盘安全**:
+   - 借助 `activeCancels` 实现线程安全的会话级主动任务打断 (`StopSession`)；
+   - 引入独立超时上下文 (`context.WithoutCancel`)，确保前端连接断开时对话记录与工具耗时 (`ToolDurations`) 依然 100% 完整落盘。
+6. **安全与鲁棒性防护**:
    - 强制使用统一安全协程 `common.RunInGoroutine`，防范后台 Panic 导致服务宕机。
    - 所有 HTTP/gRPC 请求接口均支持强类型 `protoc-gen-validate` 校验与统一的身份认证上下文传递 (`UserFromContext`)。
 
