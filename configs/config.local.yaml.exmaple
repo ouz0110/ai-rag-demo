@@ -58,13 +58,14 @@ source:
     model: "deepseek-v3.2"
     context_compress:
       enable: true
-      max_context_tokens: 8098
-      compress_ratio: 0.75
-      max_compress_count: 2
-      min_uncompressed_msgs: 2
-      keep_recent_messages: 2
-      max_summary_tokens: 500
-      timeout: 300                         # 摘要生成硬超时时间 (单位：秒)
+      max_context_tokens: 16384              # 模型最大上下文 Token 数 (以 16k 为例)
+      compress_ratio: 0.75                   # 🎯 触发阈值水线 (75%，即达到约 12288 Tokens 时触发压缩)
+      target_compress_ratio: 0.35            # 🎯 压缩后的目标上下文比例 (35%，即压缩降至总容量的 35%)
+      max_compress_count: 5                  # 单会话最大 LLM 摘要压缩次数 (达到后启动 FIFO 滚动熔断)
+      min_uncompressed_msgs: 4                # 两次压缩之间至少积累的增量消息条数 (防频繁压缩)
+      keep_recent_messages: 4                # 压缩时固定保留的最新消息条数 (确保近期对话连贯)
+      max_summary_tokens: 800                # 生成 Checkpoint 摘要的最大 Token 数 (500-1000t)
+      timeout: 30                            # 摘要生成硬超时时间 (单位：秒，默认 30)
   skill:
     enable: true                            # 是否开启 Skill 技能扩展系统全局总开关
     path: "./workspace/skills"
@@ -139,6 +140,12 @@ source:
   nocli:
     work_dir: "./workspace/agent"
     exec_timeout: 5m
+    default_tool_timeout: 60s
+    tool_timeouts:
+      terminal: 5m
+      delegate_to_rag_agent: 30s
+      call_mcp_tool: 30s
+      load_skill: 15s
     allowed_paths:
       - "./workspace/skills"
       - "./workspace/knowledges"

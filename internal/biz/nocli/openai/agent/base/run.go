@@ -131,12 +131,16 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 			}
 
 			summarizer := compressor.SummarizerFunc(func(sumCtx context.Context, toSum []openai.ChatCompletionMessage) (string, error) {
-				promptMsgs := make([]openai.ChatCompletionMessage, 0, len(toSum)+1)
+				promptMsgs := make([]openai.ChatCompletionMessage, 0, len(toSum)+2)
 				promptMsgs = append(promptMsgs, openai.ChatCompletionMessage{
 					Role:    openai.ChatMessageRoleSystem,
 					Content: CompressSystemPrompt,
 				})
 				promptMsgs = append(promptMsgs, toSum...)
+				promptMsgs = append(promptMsgs, openai.ChatCompletionMessage{
+					Role:    openai.ChatMessageRoleUser,
+					Content: "请结合上述历史对话与已有记忆，严格按照要求提炼并输出最新上下文记忆 Checkpoint 摘要。",
+				})
 				sumReq := openai.ChatCompletionRequest{
 					Model:    model,
 					Messages: SanitizeMessages(promptMsgs),

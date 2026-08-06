@@ -13,7 +13,9 @@ type contextKey struct{}
 
 func mergeKeysAndValues(kv []interface{}) (fields []zap.Field, msgFields []zap.Field) {
 	if len(kv) == 0 || len(kv)%2 != 0 {
-		DefaultLogger.Warn("key value must appear in pairs: ", zap.Any("kv", kv))
+		if DefaultLogger != nil {
+			DefaultLogger.Warn("key value must appear in pairs: ", zap.Any("kv", kv))
+		}
 		return nil, nil
 	}
 
@@ -54,14 +56,15 @@ func WithLogger(ctx context.Context, l *zap.Logger) context.Context {
 }
 
 func LoggerFromContext(ctx context.Context) *zap.Logger {
-	if ctx == nil {
+	if ctx != nil {
+		if l, ok := ctx.Value(contextKey{}).(*zap.Logger); ok && l != nil {
+			return l
+		}
+	}
+	if DefaultLogger != nil {
 		return DefaultLogger
 	}
-	if l, ok := ctx.Value(contextKey{}).(*zap.Logger); ok {
-		return l
-	}
-
-	return DefaultLogger
+	return zap.NewNop()
 }
 
 func Debugf(ctx context.Context, format string, a ...interface{}) {

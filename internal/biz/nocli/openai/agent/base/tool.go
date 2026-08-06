@@ -98,8 +98,14 @@ func (b *BaseAgent) ProcessToolCalls(
 
 		callCtx := context.WithValue(ctx, ParentToolCallIDKey, toolID)
 		callCtx = context.WithValue(callCtx, ParentToolDurationsKey, result.ToolDurations)
+
+		toolTimeout := b.GetToolTimeout(toolName)
+		toolCtx, toolCancel := context.WithTimeout(callCtx, toolTimeout)
+
 		toolStart := time.Now()
-		toolResult, err := b.toolRegistry.Call(callCtx, toolName, tc.Function.Arguments)
+		toolResult, err := b.toolRegistry.Call(toolCtx, toolName, tc.Function.Arguments)
+		toolCancel()
+
 		toolDuration := time.Since(toolStart).Milliseconds()
 		if toolDuration <= 0 {
 			toolDuration = 1
@@ -124,7 +130,10 @@ func (b *BaseAgent) ProcessToolCalls(
 					break
 				}
 			}
-			if errors.Is(err, context.Canceled) || ctx.Err() != nil || strings.Contains(err.Error(), "context canceled") {
+			if errors.Is(err, context.DeadlineExceeded) || toolCtx.Err() == context.DeadlineExceeded {
+				toolResult = fmt.Sprintf("⚠️ 【工具执行超时中断】: 工具 [%s] 执行超过 %v 未响应，已被系统强制中断以保护 Agent 响应链路。请尝试调整参数或使用替代工具。", toolName, toolTimeout)
+				log.Warnw(ctx, "tool_execution_timeout", append(baseFields, "tool_id", toolID, "tool_name", toolName, "timeout", toolTimeout, "duration_ms", toolDuration)...)
+			} else if errors.Is(err, context.Canceled) || ctx.Err() != nil || strings.Contains(err.Error(), "context canceled") {
 				toolResult = "【工具执行已中断】: 用户手动取消了本次工具调用。"
 				log.Infow(ctx, "tool_execution_canceled_by_user", append(baseFields, "tool_id", toolID, "tool_name", toolName)...)
 			} else {
@@ -194,4 +203,25 @@ func (b *BaseAgent) BuildInterruptResult(
 			AgentName:   b.Name(),
 		},
 	}
+}
+
+func (b *BaseAgent) GetToolTimeout(toolName string) time.Duration {
+	if b.cfg != nil && b.cfg.Source.Nocli != nil {
+		nocli := b.cfg.Source.Nocli
+		if nocli.ToolTimeouts != nil {
+			if t, ok := nocli.ToolTimeouts[toolName]; ok && t.Duration > 0 {
+				return t.Duration
+			}
+		}
+		if nocli.DefaultToolTimeout.Duration > 0 {
+			return nocli.DefaultToolTimeout.Duration
+		}
+		if toolName == "terminal" && nocli.ExecTimeout.Duration > 0 {
+			return nocli.ExecTimeout.Duration
+		}
+	}
+	if toolName == "terminal" {
+		return 5 * time.Minute
+	}
+	return 60 * time.Second
 }

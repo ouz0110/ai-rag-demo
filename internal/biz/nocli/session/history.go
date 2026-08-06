@@ -133,9 +133,6 @@ func (m *SessionManager) PrepareMessagesForCompletion(ctx context.Context, sessi
 	}
 
 	newMessageStart := len(messages)
-	if newMessageStart == 1 {
-		newMessageStart = 0
-	}
 	userMsgStruct := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleUser,
 		Content: userMsg,

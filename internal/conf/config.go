@@ -21,6 +21,8 @@ type durationWrapper struct {
 	time.Duration
 }
 
+type DurationWrapper = durationWrapper
+
 func (d *durationWrapper) MarshalJSON() ([]byte, error) {
 	return json.Marshal(d.String())
 }
@@ -75,7 +77,8 @@ type OTel struct {
 type OpenAIContextCompressConfig struct {
 	Enable              bool    `json:"enable" yaml:"enable"`                               // 是否开启上下文压缩
 	MaxContextTokens    int     `json:"max_context_tokens" yaml:"max_context_tokens"`       // 模型最大上下文 Token 数
-	CompressRatio       float64 `json:"compress_ratio" yaml:"compress_ratio"`               // 触发压缩的比例 (如 0.75)
+	CompressRatio       float64 `json:"compress_ratio" yaml:"compress_ratio"`               // 触发压缩的阈值比例 (如 0.75)
+	TargetCompressRatio float64 `json:"target_compress_ratio" yaml:"target_compress_ratio"` // 压缩后的目标上下文占比 (如 0.35)
 	MaxCompressCount    int     `json:"max_compress_count" yaml:"max_compress_count"`       // 单会话最大压缩次数限制
 	MinUncompressedMsgs int     `json:"min_uncompressed_msgs" yaml:"min_uncompressed_msgs"` // 两次压缩之间必须积累的最小未压缩消息条数
 	KeepRecentMessages  int     `json:"keep_recent_messages" yaml:"keep_recent_messages"`   // 压缩时固定保留的最新消息数
@@ -96,16 +99,18 @@ type AgentConfig struct {
 }
 
 type NocliConfig struct {
-	WorkDir            string                  `json:"work_dir"`
-	AllowedPaths       []string                `json:"allowed_paths" yaml:"allowed_paths"`
-	IgnoredPaths       []string                `json:"ignored_paths"`
-	AllowedSuffixes    []string                `json:"allowed_suffixes"`
-	MaxReadFiles       int                     `json:"max_read_files"`
-	MaxTotalBytes      int                     `json:"max_total_bytes"`
-	ChunkLines         int                     `json:"chunk_lines"`
-	MaxAgentIterations int                     `json:"max_agent_iterations"`
-	Agents             map[string]*AgentConfig `json:"agents"`
-	ExecTimeout        durationWrapper         `json:"exec_timeout" yaml:"exec_timeout"`
+	WorkDir            string                     `json:"work_dir"`
+	AllowedPaths       []string                   `json:"allowed_paths" yaml:"allowed_paths"`
+	IgnoredPaths       []string                   `json:"ignored_paths"`
+	AllowedSuffixes    []string                   `json:"allowed_suffixes"`
+	MaxReadFiles       int                        `json:"max_read_files"`
+	MaxTotalBytes      int                        `json:"max_total_bytes"`
+	ChunkLines         int                        `json:"chunk_lines"`
+	MaxAgentIterations int                        `json:"max_agent_iterations"`
+	Agents             map[string]*AgentConfig    `json:"agents"`
+	ExecTimeout        durationWrapper            `json:"exec_timeout" yaml:"exec_timeout"`
+	DefaultToolTimeout durationWrapper            `json:"default_tool_timeout" yaml:"default_tool_timeout"`
+	ToolTimeouts       map[string]durationWrapper `json:"tool_timeouts" yaml:"tool_timeouts"`
 }
 
 type SkillConfig struct {

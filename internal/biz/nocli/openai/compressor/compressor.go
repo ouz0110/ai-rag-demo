@@ -12,6 +12,8 @@ import (
 	openai "github.com/sashabaranov/go-openai"
 )
 
+const CheckpointPrefix = "💡 【上下文压缩摘要】"
+
 type SummarizerFunc func(ctx context.Context, toSummarize []openai.ChatCompletionMessage) (string, error)
 type OnCompressStartFunc func(origTokens int, compressedCount int)
 
@@ -31,6 +33,7 @@ type CompressResult struct {
 	CompressedMessages []openai.ChatCompletionMessage // 准备发送给 LLM 的切片
 	OriginalTokens     int                            // 压缩前 Token 数
 	CompressedTokens   int                            // 压缩后 Token 数
+	ToCompressTokens   int                            // 待压缩片段 Token 数
 	CompressedCount    int                            // 被裁切消息条数
 	SummaryText        string                         // 生成的精炼摘要
 	IsCompressed       bool                           // 是否发生了压缩/裁切
@@ -48,14 +51,56 @@ func NewContextCompressor(cfg *conf.OpenAIContextCompressConfig) *ContextCompres
 	return &ContextCompressor{cfg: cfg}
 }
 
-// EstimateTokens 快速加权估算 Token 数量 (1 中文字符 ≈ 0.75 Token)
+// EstimateStringTokens 零内存分配计算单个字符串的 Token 数
+// - ASCII 字符（英文/代码/数字）: ~0.3 Token/Byte
+// - 非 ASCII 字符（中日韩等 CJK 字符）: ~1.8 Token/Rune
+func EstimateStringTokens(s string) int {
+	if len(s) == 0 {
+		return 0
+	}
+	nonASCIICount := 0
+	nonASCIIBytes := 0
+	for _, r := range s {
+		if r > 127 {
+			nonASCIICount++
+			if r <= 0x7FF {
+				nonASCIIBytes += 2
+			} else if r <= 0xFFFF {
+				nonASCIIBytes += 3
+			} else {
+				nonASCIIBytes += 4
+			}
+		}
+	}
+	asciiBytes := len(s) - nonASCIIBytes
+	tokens := float64(asciiBytes)*0.3 + float64(nonASCIICount)*1.8
+	return int(tokens)
+}
+
+// EstimateMessageTokens 计算单条消息的估算 Token 数（包含 OpenAI 消息结构体固定 Overhead）
+func EstimateMessageTokens(m *openai.ChatCompletionMessage) int {
+	tokens := 4 // 基础消息结构与 Role 标识符开销
+	tokens += EstimateStringTokens(m.Role)
+	tokens += EstimateStringTokens(m.Content)
+	tokens += EstimateStringTokens(m.Name)
+
+	for _, tc := range m.ToolCalls {
+		tokens += 4 // ToolCall 包装开销
+		tokens += EstimateStringTokens(tc.Function.Name)
+		tokens += EstimateStringTokens(tc.Function.Arguments)
+	}
+
+	for _, mc := range m.MultiContent {
+		tokens += EstimateStringTokens(mc.Text)
+	}
+	return tokens
+}
+
+// EstimateTokens 快速精准估算消息切片的 Token 总数 (支持中英双语高效混合估算，零内存分配)
 func (c *ContextCompressor) EstimateTokens(msgs []openai.ChatCompletionMessage) int {
 	total := 0
-	for _, m := range msgs {
-		total += len([]rune(m.Content)) * 3 / 4
-		for _, tc := range m.ToolCalls {
-			total += len([]rune(tc.Function.Arguments)) * 3 / 4
-		}
+	for i := range msgs {
+		total += EstimateMessageTokens(&msgs[i])
 	}
 	return total
 }
@@ -65,9 +110,22 @@ func (c *ContextCompressor) ShouldCompress(msgs []openai.ChatCompletionMessage) 
 	if c.cfg == nil || !c.cfg.Enable || c.cfg.MaxContextTokens <= 0 {
 		return false, 0
 	}
+	ratio := c.cfg.CompressRatio
+	if ratio <= 0 || ratio >= 1.0 {
+		ratio = 0.75
+	}
 	currentTokens := c.EstimateTokens(msgs)
-	threshold := int(float64(c.cfg.MaxContextTokens) * c.cfg.CompressRatio)
+	threshold := int(float64(c.cfg.MaxContextTokens) * ratio)
 	return currentTokens > threshold, currentTokens
+}
+
+// isCheckpointMessage 判断单条消息是否为已有的 Checkpoint 摘要消息
+func isCheckpointMessage(m *openai.ChatCompletionMessage) bool {
+	if m.Role == openai.ChatMessageRoleSystem &&
+		(strings.HasPrefix(m.Content, CheckpointPrefix) || strings.HasPrefix(m.Content, "【上下文历史摘要】")) {
+		return true
+	}
+	return false
 }
 
 // Compress 执行工具安全裁切与上下文压缩/熔断降级
@@ -88,10 +146,10 @@ func (c *ContextCompressor) Compress(
 		}, nil
 	}
 
-	// 1. 拆分首部初始 System 消息与后续对话消息
+	// 1. 拆分首部初始 Base System 消息（排除已生成的历史 Checkpoint 消息）与后续对话消息
 	initialSysCount := 0
 	for _, m := range msgs {
-		if m.Role == openai.ChatMessageRoleSystem {
+		if m.Role == openai.ChatMessageRoleSystem && !isCheckpointMessage(&m) {
 			initialSysCount++
 		} else {
 			break
@@ -101,14 +159,14 @@ func (c *ContextCompressor) Compress(
 	sysMsgs := msgs[:initialSysCount]
 	dialogueMsgs := msgs[initialSysCount:]
 
-	keepCount := c.cfg.KeepRecentMessages
-	if keepCount <= 0 {
-		keepCount = 6
+	keepCount := 6
+	if c.cfg != nil && c.cfg.KeepRecentMessages > 0 {
+		keepCount = c.cfg.KeepRecentMessages
 	}
 
-	minUncompressed := c.cfg.MinUncompressedMsgs
-	if minUncompressed <= 0 {
-		minUncompressed = 6
+	minUncompressed := 6
+	if c.cfg != nil && c.cfg.MinUncompressedMsgs > 0 {
+		minUncompressed = c.cfg.MinUncompressedMsgs
 	}
 
 	// 未积累足够多的未压缩消息，且仍未达到死水位，暂时维持原状，避免频繁微调
@@ -116,18 +174,45 @@ func (c *ContextCompressor) Compress(
 		return &CompressResult{CompressedMessages: msgs, IsCompressed: false}, nil
 	}
 
-	// 🎯 动态 Token 预算留存算法 (Token-Budget Dynamic Retention):
-	// 对于 128k 等大上下文，按比例逆向保留近期 ~30% 的 Token 预算 (或至少 4k~38k Tokens)，
-	// 避免在 128k 窗口下将上下文“机械断崖式”压缩到仅剩几条消息。
-	targetKeepTokens := int(float64(c.cfg.MaxContextTokens) * 0.30)
-	if targetKeepTokens < 4000 {
-		targetKeepTokens = 4000
+	maxTokens := 16384
+	if c.cfg != nil && c.cfg.MaxContextTokens > 0 {
+		maxTokens = c.cfg.MaxContextTokens
+	}
+
+	ratio := 0.75
+	if c.cfg != nil && c.cfg.CompressRatio > 0 && c.cfg.CompressRatio < 1.0 {
+		ratio = c.cfg.CompressRatio
+	}
+
+	targetRatio := 0.35
+	if c.cfg != nil && c.cfg.TargetCompressRatio > 0 && c.cfg.TargetCompressRatio < 1.0 {
+		targetRatio = c.cfg.TargetCompressRatio
+	}
+
+	// 🎯 动态目标留存比率 (Target Context Ratio):
+	// 当达到 compress_ratio (如 0.75) 触发水线时，将压缩后的目标上下文控制在 target_compress_ratio (如 0.35)，
+	// 腾出 65% 的上下文缓冲区供后续新会话增长。
+	targetContextTokens := int(float64(maxTokens) * targetRatio)
+
+	// 🎯 三段式动态倒推预算扣除:
+	// 1. 首部 Base System 提示词开销 (动态计算，如 500-1000t)
+	sysTokens := c.EstimateTokens(sysMsgs)
+	// 2. LLM Checkpoint 摘要开销预留 (如 500-1000t)
+	summaryTokens := 500
+	if c.cfg != nil && c.cfg.MaxSummaryTokens > 0 {
+		summaryTokens = c.cfg.MaxSummaryTokens
+	}
+
+	// 3. 动态导出近期对话保留预算 (targetKeepTokens)
+	targetKeepTokens := targetContextTokens - sysTokens - summaryTokens
+	if targetKeepTokens < 500 {
+		targetKeepTokens = 500
 	}
 
 	accTokens := 0
 	rawCandidateIdx := len(dialogueMsgs) - keepCount
 	for i := len(dialogueMsgs) - 1; i >= 0; i-- {
-		msgTokens := c.EstimateTokens([]openai.ChatCompletionMessage{dialogueMsgs[i]})
+		msgTokens := EstimateMessageTokens(&dialogueMsgs[i])
 		accTokens += msgTokens
 		if accTokens >= targetKeepTokens && (len(dialogueMsgs)-i) >= keepCount {
 			rawCandidateIdx = i
@@ -145,10 +230,22 @@ func (c *ContextCompressor) Compress(
 
 	toCompress := dialogueMsgs[:splitIdx]
 	toKeep := dialogueMsgs[splitIdx:]
+	toCompressTokens := c.EstimateTokens(toCompress)
 
-	maxCompressCount := c.cfg.MaxCompressCount
-	if maxCompressCount <= 0 {
-		maxCompressCount = 5
+	// 🎯 动态压缩收益门禁 (Dynamic Compression ROI Guard):
+	// 待压缩旧历史 toCompress 必须达到容量差额，防止在最近保留区占大头时无意义触发 LLM 摘要
+	minCompressTokens := int(float64(maxTokens)*ratio) - targetKeepTokens - sysTokens
+	if minCompressTokens < 500 {
+		minCompressTokens = 500
+	}
+	if toCompressTokens < minCompressTokens {
+		log.Debugw(ctx, "compress_skipped_low_roi", "to_compress_tokens", toCompressTokens, "min_required", minCompressTokens, "orig_tokens", origTokens)
+		return &CompressResult{CompressedMessages: msgs, IsCompressed: false}, nil
+	}
+
+	maxCompressCount := 5
+	if c.cfg != nil && c.cfg.MaxCompressCount > 0 {
+		maxCompressCount = c.cfg.MaxCompressCount
 	}
 
 	// 2. 检查是否达到了最大压缩次数限制 (触发熔断)
@@ -205,10 +302,10 @@ func (c *ContextCompressor) Compress(
 
 	checkpointMsg := openai.ChatCompletionMessage{
 		Role:    openai.ChatMessageRoleSystem,
-		Content: fmt.Sprintf("💡 【上下文压缩摘要】:\n%s", summaryText),
+		Content: fmt.Sprintf("%s:\n%s", CheckpointPrefix, summaryText),
 	}
 
-	// 4. 重组发送给 LLM 的切片: [首部 System] + [最新 Checkpoint] + [最近 N 轮]
+	// 4. 重组发送给 LLM 的切片: [首部 Base System] + [最新 Checkpoint] + [最近 N 轮]
 	newLLMMsgs := make([]openai.ChatCompletionMessage, 0, len(sysMsgs)+1+len(toKeep))
 	newLLMMsgs = append(newLLMMsgs, sysMsgs...)
 	newLLMMsgs = append(newLLMMsgs, checkpointMsg)
@@ -220,6 +317,7 @@ func (c *ContextCompressor) Compress(
 		CompressedMessages: newLLMMsgs,
 		OriginalTokens:     origTokens,
 		CompressedTokens:   compressedTokens,
+		ToCompressTokens:   toCompressTokens,
 		CompressedCount:    len(toCompress),
 		SummaryText:        summaryText,
 		IsCompressed:       true,
@@ -231,39 +329,62 @@ func (c *ContextCompressor) Compress(
 // buildFallbackExtractionSummary 文本抽取式降级摘要逻辑 (当 LLM 摘要超时/报错时使用)
 func (c *ContextCompressor) buildFallbackExtractionSummary(msgs []openai.ChatCompletionMessage) string {
 	var userTopics []string
+	var toolCalls []string
 	var lastAssistantReply string
 
 	for _, m := range msgs {
-		if m.Role == openai.ChatMessageRoleUser && m.Content != "" {
-			runes := []rune(m.Content)
-			if len(runes) > 80 {
-				userTopics = append(userTopics, string(runes[:80])+"...")
-			} else {
-				userTopics = append(userTopics, m.Content)
+		switch m.Role {
+		case openai.ChatMessageRoleUser:
+			if m.Content != "" {
+				runes := []rune(m.Content)
+				if len(runes) > 100 {
+					userTopics = append(userTopics, string(runes[:100])+"...")
+				} else {
+					userTopics = append(userTopics, m.Content)
+				}
 			}
-		} else if m.Role == openai.ChatMessageRoleAssistant && m.Content != "" {
-			runes := []rune(m.Content)
-			if len(runes) > 150 {
-				lastAssistantReply = string(runes[:150]) + "..."
-			} else {
-				lastAssistantReply = m.Content
+		case openai.ChatMessageRoleAssistant:
+			if len(m.ToolCalls) > 0 {
+				for _, tc := range m.ToolCalls {
+					toolCalls = append(toolCalls, tc.Function.Name)
+				}
+			}
+			if m.Content != "" {
+				runes := []rune(m.Content)
+				if len(runes) > 200 {
+					lastAssistantReply = string(runes[:200]) + "..."
+				} else {
+					lastAssistantReply = m.Content
+				}
 			}
 		}
 	}
 
-	sb := strings.Builder{}
+	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("【上下文历史摘要】(已自动合并 %d 条早期消息):\n", len(msgs)))
-	
+
 	if len(userTopics) > 0 {
 		sb.WriteString("📌 早期探讨核心主题:\n")
-		// 最多列出前 3 个核心提问主题
-		limit := 3
+		limit := 5
 		if len(userTopics) < limit {
 			limit = len(userTopics)
 		}
 		for i := 0; i < limit; i++ {
 			sb.WriteString(fmt.Sprintf("  - %s\n", userTopics[i]))
 		}
+	}
+
+	if len(toolCalls) > 0 {
+		sb.WriteString("🛠️ 期间已调用的工具:\n")
+		seen := make(map[string]bool)
+		var uniqueTools []string
+		for _, t := range toolCalls {
+			if !seen[t] {
+				seen[t] = true
+				uniqueTools = append(uniqueTools, t)
+			}
+		}
+		sb.WriteString(fmt.Sprintf("  - %s\n", strings.Join(uniqueTools, ", ")))
 	}
 
 	if lastAssistantReply != "" {
@@ -293,24 +414,31 @@ func (c *ContextCompressor) findSafeToolBoundary(msgs []openai.ChatCompletionMes
 	}
 
 	// 2. 继续向前寻找到最近的 User 消息边界，确保 toKeep 切片干净地从 User 消息开始
-	for scan := idx; scan > 0; scan-- {
+	for scan := idx; scan >= 0; scan-- {
 		if msgs[scan].Role == openai.ChatMessageRoleUser {
 			return scan
 		}
 	}
 
-	return idx
+	// 3. 如果没有在前面找到 User 消息，退化为按 idx 安全切分
+	if idx > 0 {
+		return idx
+	}
+	return 0
 }
 
 // distillToolOutputs 预处理待压缩列表中的巨大 Tool 输出，避免庞大的工具数据冲爆摘要模型的输入窗口
 func (c *ContextCompressor) distillToolOutputs(msgs []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
 	distilled := make([]openai.ChatCompletionMessage, 0, len(msgs))
 	for _, m := range msgs {
-		if m.Role == openai.ChatMessageRoleTool && len(m.Content) > 1200 {
+		if m.Role == openai.ChatMessageRoleTool {
 			runes := []rune(m.Content)
-			m.Content = fmt.Sprintf("%s\n...[已蒸馏长工具输出: 原始长度 %d 字符]...", string(runes[:600]), len(runes))
+			if len(runes) > 600 {
+				m.Content = fmt.Sprintf("%s\n...[已蒸馏长工具输出: 原始长度 %d 字符]...", string(runes[:600]), len(runes))
+			}
 		}
 		distilled = append(distilled, m)
 	}
 	return distilled
 }
+
