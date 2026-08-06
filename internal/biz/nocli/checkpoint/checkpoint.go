@@ -11,7 +11,6 @@ import (
 // AgentToolOptions 子 Agent 控制选项
 type AgentToolOptions struct {
 	PassFullContextToSubAgent bool `json:"pass_full_context_to_sub_agent"`
-	ReturnFullContextToParent bool `json:"return_full_context_to_parent"`
 	StreamSubAgentExecution   bool `json:"stream_sub_agent_execution"`
 }
 

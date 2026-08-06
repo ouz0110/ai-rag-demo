@@ -20,11 +20,10 @@
 | `AgentToolOptions` | 控制父子 Agent 交互的行为开关（3 个 bool） |
 | `AgentTool` | 持有 `targetAgent`、`chatModel`、`opts`，实现 OpenAI Tool 协议 |
 
-### `AgentToolOptions` 三个开关（面试高频点）
+### `AgentToolOptions` 开关说明
 
 - **`PassFullContextToSubAgent`**（默认 `false`）：父 → 子，是否把父 Agent 的完整历史消息透传给子 Agent。
-- **`ReturnFullContextToParent`**（默认 `false`）：子 → 父，子 Agent 执行完成后，将自身的完整多轮消息历史通过回调追加回父 Agent 的消息栈，供父 Agent 后续轮次使用。
-- **`StreamSubAgentExecution`**（默认 `true`）：子 Agent 执行时是否把中间推理/思考过程实时流式推送给用户。
+- **`StreamSubAgentExecution`**（默认 `true`）：子 Agent 执行时是否把中间推理/思考过程实时流式推送给用户并存盘用于 Web 回放。
 
 ---
 
@@ -55,9 +54,9 @@ Run(argsJSON) 被触发
    - 子 Agent 自主完成：推理 → 调用工具 → 生成回复
    - 父子完全解耦执行
         ↓
-6. ReturnFullContextToParent = true 时
+6. StreamSubAgentExecution = true 时
    - 从 ctx 读取 parent_messages_appender 回调
-   - 将 loopRes.Messages 追加进父消息栈
+   - 将 loopRes.Messages 增量步骤写入数据库以供 Web UI 存盘回放（在 LLM 运行时自动过滤）
         ↓
 7. 提取 loopRes.Reply，包装成总结字符串返回给父
 ```

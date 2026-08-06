@@ -148,7 +148,7 @@
         type="button"
         :class="[
           'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-medium transition-all cursor-pointer shadow-sm select-none',
-          kbStore.agentToolOptions.return_full_context_to_parent || kbStore.agentToolOptions.pass_full_context_to_sub_agent
+          kbStore.agentToolOptions.pass_full_context_to_sub_agent
             ? 'bg-gradient-to-r from-blue-500/20 to-indigo-600/20 border-blue-500/50 text-blue-300 shadow-blue-500/10'
             : 'bg-white/5 border-white/10 text-gray-400 hover:text-gray-200 hover:bg-white/10'
         ]"
@@ -183,24 +183,11 @@
             />
           </label>
 
-          <!-- 2. ReturnFullContextToParent -->
+          <!-- StreamSubAgentExecution (合并包含 DB 存盘与 Web 回放) -->
           <label class="flex items-center justify-between p-2 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer transition-colors">
             <div class="flex flex-col">
-              <span class="font-medium text-gray-200">子 ➔ 父 上下文追加</span>
-              <span class="text-[10px] text-gray-400">将子 Agent 多轮执行过程追加回父历史</span>
-            </div>
-            <input
-              type="checkbox"
-              v-model="kbStore.agentToolOptions.return_full_context_to_parent"
-              class="w-4 h-4 rounded border-gray-600 bg-gray-700 text-indigo-500 focus:ring-indigo-400 focus:ring-offset-gray-900 cursor-pointer"
-            />
-          </label>
-
-          <!-- 3. StreamSubAgentExecution -->
-          <label class="flex items-center justify-between p-2 rounded-xl bg-white/5 hover:bg-white/10 cursor-pointer transition-colors">
-            <div class="flex flex-col">
-              <span class="font-medium text-gray-200">子 Agent 过程流式推送</span>
-              <span class="text-[10px] text-gray-400">实时推送子 Agent 中间推导/工具调用</span>
+              <span class="font-medium text-gray-200">子 Agent 过程流式推送与落盘</span>
+              <span class="text-[10px] text-gray-400">实时推送子 Agent 中间推导并存盘用于 Web 回放</span>
             </div>
             <input
               type="checkbox"

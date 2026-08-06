@@ -7,6 +7,7 @@ import (
 	"time"
 
 	pb "ai-rag-demo/api/nocli/v1"
+	agentbase "ai-rag-demo/internal/biz/nocli/openai/agent/base"
 	"ai-rag-demo/internal/common"
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
@@ -101,20 +102,7 @@ func (m *SessionManager) LoadHistoryForLLM(ctx context.Context, sessionID string
 // FilterSubAgentMessagesForLLM 过滤掉为 Web 展示保存的子 Agent 内部多轮细节消息 (如 read_files/list_files)
 // 保证 LLM 运行时接收到的历史上下文极简、无 Token 冲爆隐患，且仅包含主 Agent 的委派指令与总结 ToolResult。
 func FilterSubAgentMessagesForLLM(msgs []openai.ChatCompletionMessage) []openai.ChatCompletionMessage {
-	if len(msgs) == 0 {
-		return nil
-	}
-
-	filtered := make([]openai.ChatCompletionMessage, 0, len(msgs))
-	for _, m := range msgs {
-		// 如果消息明确标记为子 Agent 的 Name (如 "file_analyzer", "rag_agent" 等且非 "main")，在发给 LLM 时予以排除
-		if m.Name != "" && m.Name != "main" && m.Role != openai.ChatMessageRoleUser {
-			continue
-		}
-		filtered = append(filtered, m)
-	}
-
-	return filtered
+	return agentbase.FilterSubAgentMessagesForLLM(msgs)
 }
 
 // PrepareMessagesForCompletion 为 Completion 准备消息：处理过期中断、追加用户新消息并清洗未决 ToolCalls

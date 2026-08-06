@@ -187,13 +187,11 @@ func parseAgentToolOptions(pbOpts *pb.AgentToolOptions) agentbase.AgentToolOptio
 	if pbOpts == nil {
 		return agentbase.AgentToolOptions{
 			PassFullContextToSubAgent: false,
-			ReturnFullContextToParent: false,
 			StreamSubAgentExecution:   true,
 		}
 	}
 	return agentbase.AgentToolOptions{
 		PassFullContextToSubAgent: pbOpts.PassFullContextToSubAgent,
-		ReturnFullContextToParent: pbOpts.ReturnFullContextToParent,
 		StreamSubAgentExecution:   pbOpts.StreamSubAgentExecution,
 	}
 }

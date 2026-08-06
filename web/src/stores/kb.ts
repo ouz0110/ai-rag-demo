@@ -63,7 +63,6 @@ function normalizeKB(kb: any): KnowledgeBase {
 
 export interface AgentToolOptions {
   pass_full_context_to_sub_agent: boolean;
-  return_full_context_to_parent: boolean;
   stream_sub_agent_execution: boolean;
 }
 
@@ -78,7 +77,6 @@ export const useKBStore = defineStore('kb', () => {
   const enableRerank = ref<boolean>(true); // 默认开启 Rerank 重排开关！
   const agentToolOptions = ref<AgentToolOptions>({
     pass_full_context_to_sub_agent: false,
-    return_full_context_to_parent: false,
     stream_sub_agent_execution: true,
   });
   const loading = ref<boolean>(false);

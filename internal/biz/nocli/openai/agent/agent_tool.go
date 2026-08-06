@@ -97,7 +97,6 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 		"target_agent", t.targetAgent.Name(),
 		"query", args.Query,
 		"pass_full_ctx", opts.PassFullContextToSubAgent,
-		"return_full_ctx", opts.ReturnFullContextToParent,
 		"stream_sub_agent", opts.StreamSubAgentExecution,
 	)
 
@@ -208,7 +207,6 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 			SubMessages:      loopRes.Messages,
 			AgentToolOptions: base.AgentToolOptions{
 				PassFullContextToSubAgent: opts.PassFullContextToSubAgent,
-				ReturnFullContextToParent: opts.ReturnFullContextToParent,
 				StreamSubAgentExecution:   opts.StreamSubAgentExecution,
 			},
 			KBTenantID:    kbTenantID,
@@ -263,7 +261,6 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 			PendingToolCall:  pendingCall,
 			AgentToolOptions: base.AgentToolOptions{
 				PassFullContextToSubAgent: opts.PassFullContextToSubAgent,
-				ReturnFullContextToParent: opts.ReturnFullContextToParent,
 				StreamSubAgentExecution:   opts.StreamSubAgentExecution,
 			},
 			KBTenantID:    kbTenantID,
@@ -296,8 +293,8 @@ func (t *AgentTool) Run(ctx context.Context, argsJSON string) (string, error) {
 
 	log.Debugw(ctx, "agent_tool_completed", "target_agent", t.targetAgent.Name(), "reply_len", len(loopRes.Reply))
 
-	// 4. 支持 ReturnFullContextToParent: 精确切片剥离传入的父级历史与 System Prompt，仅追加子 Agent 本次生成的【增量执行过程】
-	if opts.ReturnFullContextToParent && len(loopRes.Messages) >= initialSubMsgsLen {
+	// 4. 开启 StreamSubAgentExecution 时，保存子 Agent 本次生成的【增量执行过程】供 DB 落盘与 Web 回放
+	if opts.StreamSubAgentExecution && len(loopRes.Messages) >= initialSubMsgsLen {
 		newSubMsgs := loopRes.Messages[initialSubMsgsLen-1:] // 从子 Agent 接收到的 User 委派指令处切片
 		toReturn := make([]openai.ChatCompletionMessage, 0, len(newSubMsgs))
 		for _, m := range newSubMsgs {

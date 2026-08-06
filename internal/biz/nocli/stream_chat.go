@@ -372,7 +372,6 @@ func (s *ChatBiz) trySubAgentCheckpointResume(
 	if req.AgentToolOptions == nil {
 		agentOpts = agentbase.AgentToolOptions{
 			PassFullContextToSubAgent: cp.AgentToolOptions.PassFullContextToSubAgent,
-			ReturnFullContextToParent: cp.AgentToolOptions.ReturnFullContextToParent,
 			StreamSubAgentExecution:   cp.AgentToolOptions.StreamSubAgentExecution,
 		}
 	}
@@ -497,7 +496,7 @@ func (s *ChatBiz) trySubAgentCheckpointResume(
 	}
 
 	executedMsgs := []openai.ChatCompletionMessage{toolMsg}
-	if agentOpts.ReturnFullContextToParent {
+	if agentOpts.StreamSubAgentExecution {
 		for _, m := range loopRes.Messages {
 			if m.Role == openai.ChatMessageRoleSystem {
 				continue

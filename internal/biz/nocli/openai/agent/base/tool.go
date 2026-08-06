@@ -166,7 +166,7 @@ func (b *BaseAgent) ProcessToolCalls(
 		}
 		result.ExecutedMsgs = append(result.ExecutedMsgs, toolMsg)
 
-		// 2. 若开启了 ReturnFullContextToParent，将子 Agent 的增量细节消息紧跟在闭包之后追加
+		// 2. 将子 Agent 的增量细节消息紧跟在闭包之后追加 (供 DB 落盘与 Web 端回放，在 LLM 运行时会自动过滤)
 		if subBuffer, ok := ctx.Value(ParentSubMsgBufferKey).(*[]openai.ChatCompletionMessage); ok && subBuffer != nil && len(*subBuffer) > 0 {
 			result.ExecutedMsgs = append(result.ExecutedMsgs, (*subBuffer)...)
 			*subBuffer = nil

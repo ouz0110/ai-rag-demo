@@ -193,9 +193,7 @@ message StreamChunk {
 message AgentToolOptions {
   // 父 -> 子：是否将父 Agent 的完整历史消息透传给子 Agent（默认 false）
   bool pass_full_context_to_sub_agent = 1;
-  // 子 -> 父：是否将子 Agent 内部多轮执行历史追加回父 Agent（默认 false）
-  bool return_full_context_to_parent = 2;
-  // 是否将子 Agent 的中间执行过程流式推送给用户（默认 true）
+  // 是否将子 Agent 的中间执行过程流式推送与存盘（默认 true）
   bool stream_sub_agent_execution = 3;
 }
 

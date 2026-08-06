@@ -122,8 +122,8 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 			return loopRes, err
 		}
 
-		// 🎯 校验并触发上下文压缩
-		messagesForLLM := messages
+		// 🎯 校验并触发上下文压缩 (发送给 LLM 的切片必须排除子 Agent 的内部细节消息，防止多重角色认知混淆与乱输出)
+		messagesForLLM := FilterSubAgentMessagesForLLM(messages)
 		if opts.Compressor != nil {
 			syncFetcher := opts.SyncFetcher
 			if syncFetcher == nil {

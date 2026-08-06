@@ -169,7 +169,6 @@ export interface CompletionRequest {
   enable_rerank?: boolean;
   agent_tool_options?: {
     pass_full_context_to_sub_agent?: boolean;
-    return_full_context_to_parent?: boolean;
     stream_sub_agent_execution?: boolean;
   };
   is_continue?: boolean;
@@ -191,7 +190,6 @@ export interface ResumeRequest {
   enable_rerank?: boolean;
   agent_tool_options?: {
     pass_full_context_to_sub_agent?: boolean;
-    return_full_context_to_parent?: boolean;
     stream_sub_agent_execution?: boolean;
   };
 }
