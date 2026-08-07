@@ -54,7 +54,20 @@
 - **脱钩落盘安全保护 (`context.WithoutCancel`)**: 即使客户端中途切断 HTTP/SSE 连接，后台仍借助独立超时上下文保障对话记录与工具耗时 100% 完整安全落盘。
 - **细粒度耗时归因与配额记账 (`common/usage.go`)**: 实时记录各工具耗时 (`ToolDurations`)，并实现 Prompt/Completion/Embedding Token 的统一计量与并发扣费。
 
-### 6. 商业化与微服务基础设施
+### 6. 大模型全链路追踪与可观测性 (LLM Observability & Tracing)
+参考 **CloudWeGo Eino** 框架切面与 **OpenTelemetry GenAI** 语义规范，自研了可插拔式的全局切面观测抽象 (`internal/pkg/observability`)，实现对 Agent 循环、LLM API 调用、Tool 工具执行及长文本压缩的**微秒级全生命周期监控**：
+- **四大切面钩子 (Observer Hooks)**：
+  - `OnAgentStart` / `OnAgentEnd`: 监控 Agent 任务启动、硬超时配置、执行耗时与回答内容摘要 (`reply_summary`，约 100 字符)。
+  - `OnLLMStart` / `OnLLMEnd`: 监控每轮 LLM API 请求参数、Token 吞吐、生成内容摘要 (`content_summary`) 或工具调用意图摘要 (`tool_calls_summary`)。
+  - `OnToolStart` / `OnToolEnd`: 监控物理工具/子 Agent 工具调用的输入参数摘要 (`args_summary`) 与返回结果摘要 (`result_summary`)。
+  - `OnCompressStart` / `OnCompressEnd`: 监控上下文压缩水线、原始与压缩后 Token 数、省额比与 Checkpoint 节点摘要 (`summary_snippet`)。
+- **双通道无缝开关与融合**：
+  - **本地结构化切面日志 (`enable_trace_log: true`)**：自动将全链路节点与 100 字符摘要单行化输出至本地日志，零第三方依赖即可通过 `request_id` 进行故障排查。
+  - **OpenTelemetry 分布式追踪 (`otel.enable: true`)**：生成符合 OpenTelemetry 规范的瀑布流 Trace 图，支持直接上报至 Jaeger、Zipkin 或 OTel Collector 观测平台。
+- **上下文自动保底提取机制**：
+  - 全链路绑定并透传 `X-Request-ID`。即便底层组件未显式传递 `session_id` 或 `agent_name`，观测器也会自动从 Context 中补全提取，确保链路指标绝不留空。
+
+### 7. 商业化与微服务基础设施
 - **账户与权限管理 (`base/accounts.go`)**: 支持用户注册、登录、JWT 认证、多租户隔离及 OpenID 绑定。
 - **Token 消耗与计费 (`base/billing.go`)**: 实时统计 LLM / RAG / Embedding 的 Token 消耗与额度扣减。
 - **微服务治理**: 支持 Nacos 服务注册与发现、配置动态加载、Google Wire 依赖注入。
@@ -102,7 +115,7 @@ internal/
 ├── data/             # 数据持久化层 (GORM DB CRUD, Milvus Adapter)
 ├── cache/            # 缓存层 (Redis & 分布式锁)
 ├── external/         # 外部服务集成 (MCP Manager, RPC Proxy)
-├── pkg/              # 公共组件 (Skills 扫描管理器、Log、Utils)
+├── pkg/              # 公共组件 (LLM 全链路切面观测 observability、Skills 扫描管理器、Log、Utils)
 └── server/           # HTTP/gRPC 服务端初始化
 ```
 
@@ -124,7 +137,10 @@ internal/
 5. **任务优雅控制与脱钩落盘安全**:
    - 借助 `activeCancels` 实现线程安全的会话级主动任务打断 (`StopSession`)；
    - 引入独立超时上下文 (`context.WithoutCancel`)，确保前端连接断开时对话记录与工具耗时 (`ToolDurations`) 依然 100% 完整落盘。
-6. **安全与鲁棒性防护**:
+6. **大模型全链路追踪与插拔式可观测性**:
+   - 自研 `internal/pkg/observability` 切面机制，解耦业务逻辑与链路监控。
+   - 包含 Agent、LLM、Tool、Compressor 四维 Hook，支持 100 字符单行文本摘要速览，以及本地切面日志与 OpenTelemetry 远程 Trace 导出无缝开关联动。
+7. **安全与鲁棒性防护**:
    - 强制使用统一安全协程 `common.RunInGoroutine`，防范后台 Panic 导致服务宕机。
    - 所有 HTTP/gRPC 请求接口均支持强类型 `protoc-gen-validate` 校验与统一的身份认证上下文传递 (`UserFromContext`)。
 
