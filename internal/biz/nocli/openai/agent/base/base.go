@@ -11,6 +11,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -312,7 +313,25 @@ func (b *BaseAgent) GetMaxIterationsForAgent(agentName string, defaultMax int) i
 }
 
 func (b *BaseAgent) MaxIterations() int {
-	return b.GetMaxIterationsForAgent("main", 15)
+	return b.GetMaxIterationsForAgent(b.name, 15)
+}
+
+func (b *BaseAgent) GetTimeoutForAgent(agentName string) time.Duration {
+	if b.cfg != nil && b.cfg.Source.Nocli != nil {
+		if b.cfg.Source.Nocli.Agents != nil {
+			if agentCfg, ok := b.cfg.Source.Nocli.Agents[agentName]; ok && agentCfg != nil && agentCfg.Timeout.Duration > 0 {
+				return agentCfg.Timeout.Duration
+			}
+		}
+		if b.cfg.Source.Nocli.ExecTimeout.Duration > 0 {
+			return b.cfg.Source.Nocli.ExecTimeout.Duration
+		}
+	}
+	return 5 * time.Minute
+}
+
+func (b *BaseAgent) Timeout() time.Duration {
+	return b.GetTimeoutForAgent(b.name)
 }
 
 func (b *BaseAgent) handleMaxIterationsReached(

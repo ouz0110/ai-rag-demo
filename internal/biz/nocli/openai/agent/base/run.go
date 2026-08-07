@@ -19,6 +19,15 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 		return nil, fmt.Errorf("opts 不能为空")
 	}
 
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		agentTimeout := b.GetTimeoutForAgent(b.Name())
+		if agentTimeout > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, agentTimeout)
+			defer cancel()
+		}
+	}
+
 	sessionID := opts.SessionID
 	if sessionID != "" && ctx.Value(ParentSessionIDKey) == nil {
 		ctx = context.WithValue(ctx, ParentSessionIDKey, sessionID)
@@ -227,7 +236,12 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 			msg, err = fetcher(ctx, req)
 		}
 		if err != nil {
-			// 🎯 核心增强：如果是 context canceled / 用户主动停止 / 网络断连，按正常停止收尾，不抛出 LLM 失败异常
+			// 🎯 1. 检查是否为 Agent 执行超时 (context.DeadlineExceeded)
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "timeout") {
+				return b.handleTimeoutReached(ctx, sessionID, messages, msg.Content, baseFields, emitter, newCheckpointMsg, allToolDurations)
+			}
+
+			// 🎯 2. 检查是否为用户主动取消 (context.Canceled)
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil || strings.Contains(err.Error(), "context canceled") {
 				log.Infow(ctx, "agent_run_canceled_by_user_or_context", append(baseFields, "session_id", sessionID)...)
 				if msg.Content != "" || len(msg.ToolCalls) > 0 {
@@ -338,4 +352,67 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 			}, nil
 		}
 	}
+}
+
+func (b *BaseAgent) handleTimeoutReached(
+	ctx context.Context,
+	sessionID string,
+	messages []openai.ChatCompletionMessage,
+	partialContent string,
+	baseFields []interface{},
+	emitter StreamEmitter,
+	newCheckpointMsg *openai.ChatCompletionMessage,
+	allToolDurations map[string]int64,
+) (*LoopResult, error) {
+	agentTimeout := b.GetTimeoutForAgent(b.Name())
+	log.Warnw(ctx, "agent_run_timeout_friendly_fallback", append(baseFields, "session_id", sessionID, "timeout", agentTimeout.String())...)
+
+	isMain := b.Name() == "main"
+
+	var timeoutNotice string
+	if isMain {
+		timeoutNotice = fmt.Sprintf("\n\n⏱️ 【系统提示：主 Agent (%s) 执行已达到最长超时限制 (%v)】\n💡 已为您保留截至超时前检索与推导的阶段性结果。如需继续深入，可以直接发送“继续”恢复执行。", b.Name(), agentTimeout)
+	} else {
+		timeoutNotice = fmt.Sprintf("\n\n⏱️ 【子 Agent (%s) 执行超时提醒 (%v)】\n💡 截至超时前已完成部分分析与推导，阶段性结果已返回给主 Agent 供参考。", b.Name(), agentTimeout)
+	}
+
+	reply := strings.TrimSpace(partialContent)
+	if reply != "" {
+		reply += timeoutNotice
+	} else {
+		reply = strings.TrimLeft(timeoutNotice, "\n")
+	}
+
+	messages = append(messages, openai.ChatCompletionMessage{
+		Role:    openai.ChatMessageRoleAssistant,
+		Content: reply,
+		Name:    b.Name(),
+	})
+
+	// 🎯 区分父子 Agent 决定 Stream 结束信号：
+	// - 主 Agent 超时：推送 SET_TEXT_DELTA 并发送 SET_DONE 结束全流程；
+	// - 子 Agent 超时：只包装阶段性 ToolResult 返回给主 Agent，绝不提前发送 SET_DONE，确保主 Agent 能正常继续推导！
+	if isMain {
+		emitter(&pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_TEXT_DELTA,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_IDLE,
+			Text:      timeoutNotice,
+		})
+
+		emitter(&pb.StreamChunk{
+			Event:     pb.StreamEventType_SET_DONE,
+			SessionId: sessionID,
+			Status:    pb.SessionStatus_SS_IDLE,
+		})
+	}
+
+	return &LoopResult{
+		AgentName:        b.Name(),
+		Messages:         messages,
+		Reply:            reply,
+		Status:           pb.SessionStatus_SS_IDLE,
+		NewCheckpointMsg: newCheckpointMsg,
+		ToolDurations:    allToolDurations,
+	}, nil
 }

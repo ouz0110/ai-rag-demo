@@ -139,13 +139,24 @@ source:
       split_threshold: 0.45
   nocli:
     work_dir: "./workspace/agent"
-    exec_timeout: 5m
-    default_tool_timeout: 60s
-    tool_timeouts:
+    max_agent_iterations: 15                 # 🎯 全局 Agent 默认最大 ReAct 循环迭代次数
+    exec_timeout: 5m                         # 🎯 Agent 单次任务总执行超时时间 (5分钟)
+    default_tool_timeout: 60s               # 🎯 工具默认调用超时时间 (60秒)
+    tool_timeouts:                          # 🎯 特定工具调用超时配置
       terminal: 5m
-      delegate_to_rag_agent: 30s
+      delegate_to_rag_agent: 5m
       call_mcp_tool: 30s
       load_skill: 15s
+    agents:                                 # 🎯 特定 Agent 配置重写 (包含迭代次数 max_iterations 与独享超时 timeout)
+      main:
+        max_iterations: 20                  # 主 Agent 最大循环次数 (默认 20 次)
+        timeout: 5m                          # 主 Agent 独享硬超时时间 (5分钟)
+      file_analyzer:
+        max_iterations: 10                  # 文件分析子 Agent 最大循环次数 (10 次)
+        timeout: 3m                          # 文件分析子 Agent 独享硬超时时间 (3分钟，超时优雅返回阶段性结果给主 Agent)
+      rag_agent:
+        max_iterations: 10                  # RAG 检索子 Agent 最大循环次数 (10 次)
+        timeout: 2m                          # RAG 检索子 Agent 独享硬超时时间 (2分钟，超时优雅返回阶段性结果给主 Agent)
     allowed_paths:
       - "./workspace/skills"
       - "./workspace/knowledges"

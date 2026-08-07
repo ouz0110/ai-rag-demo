@@ -95,19 +95,20 @@ type OpenAI struct {
 }
 
 type AgentConfig struct {
-	MaxIterations int `json:"max_iterations"`
+	MaxIterations int             `json:"max_iterations" yaml:"max_iterations"`
+	Timeout       durationWrapper `json:"timeout" yaml:"timeout"`
 }
 
 type NocliConfig struct {
-	WorkDir            string                     `json:"work_dir"`
+	WorkDir            string                     `json:"work_dir" yaml:"work_dir"`
 	AllowedPaths       []string                   `json:"allowed_paths" yaml:"allowed_paths"`
-	IgnoredPaths       []string                   `json:"ignored_paths"`
-	AllowedSuffixes    []string                   `json:"allowed_suffixes"`
-	MaxReadFiles       int                        `json:"max_read_files"`
-	MaxTotalBytes      int                        `json:"max_total_bytes"`
-	ChunkLines         int                        `json:"chunk_lines"`
-	MaxAgentIterations int                        `json:"max_agent_iterations"`
-	Agents             map[string]*AgentConfig    `json:"agents"`
+	IgnoredPaths       []string                   `json:"ignored_paths" yaml:"ignored_paths"`
+	AllowedSuffixes    []string                   `json:"allowed_suffixes" yaml:"allowed_suffixes"`
+	MaxReadFiles       int                        `json:"max_read_files" yaml:"max_read_files"`
+	MaxTotalBytes      int                        `json:"max_total_bytes" yaml:"max_total_bytes"`
+	ChunkLines         int                        `json:"chunk_lines" yaml:"chunk_lines"`
+	MaxAgentIterations int                        `json:"max_agent_iterations" yaml:"max_agent_iterations"`
+	Agents             map[string]*AgentConfig    `json:"agents" yaml:"agents"`
 	ExecTimeout        durationWrapper            `json:"exec_timeout" yaml:"exec_timeout"`
 	DefaultToolTimeout durationWrapper            `json:"default_tool_timeout" yaml:"default_tool_timeout"`
 	ToolTimeouts       map[string]durationWrapper `json:"tool_timeouts" yaml:"tool_timeouts"`
