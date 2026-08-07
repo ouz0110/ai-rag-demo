@@ -20,6 +20,7 @@ import (
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/external/mcp"
 	"ai-rag-demo/internal/pkg/log"
+	"ai-rag-demo/internal/pkg/observability"
 	"ai-rag-demo/internal/pkg/skill"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -243,6 +244,7 @@ func (s *ChatBiz) Completion(ctx context.Context, req *pb.CompletionRequest) (*p
 	if err != nil {
 		return nil, err
 	}
+	ctx = observability.WithSessionID(ctx, sessionID)
 
 	messages, newMessageStart, err := s.sessionMgr.PrepareMessagesForCompletion(ctx, sessionID, req.Message)
 	if err != nil {

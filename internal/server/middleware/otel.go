@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"ai-rag-demo/internal/conf"
+	"ai-rag-demo/internal/pkg/observability"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.37.0"
 	"go.opentelemetry.io/otel/trace"
@@ -20,44 +23,74 @@ import (
 func Tracing(cfg *conf.Config) middleware.Middleware {
 	return func(handler middleware.Handler) middleware.Handler {
 		return func(ctx context.Context, req interface{}) (reply interface{}, err error) {
-			if cfg.Source.OTel == nil || !cfg.Source.OTel.Enable {
-				return handler(ctx, req)
-			}
 			startTime := time.Now()
+			var requestID string
+			if tp, ok := transport.FromServerContext(ctx); ok && tp.RequestHeader() != nil {
+				requestID = tp.RequestHeader().Get("X-Request-ID")
+			}
+			ctx = observability.WithRequestID(ctx, requestID)
+			requestID = observability.GetRequestID(ctx)
 
-			tp, _ := transport.FromServerContext(ctx)
-			operation := tp.Operation()
-			kind := tp.Kind().String()
+			// 🎯 观测者开关控制：
+			// 1. 本地日志链路开关 (enable_trace_log)：开启后在本地日志打印全链路切面节点 (LogObserver)；
+			// 2. OpenTelemetry 远程导出开关 (otel.enable)：开启后向 OTel Collector 推送 Trace (OTelObserver)。
+			var observers []observability.Observer
+			if cfg != nil && cfg.Source.Log.EnableTraceLog {
+				observers = append(observers, observability.NewLogObserver())
+			}
+			if cfg != nil && cfg.Source.OTel != nil && cfg.Source.OTel.Enable {
+				observers = append(observers, observability.NewOTelObserver(nil))
+			}
+			if len(observers) > 0 {
+				ctx = observability.WithObserver(ctx, observability.NewCompositeObserver(observers...))
+			}
 
 			span := trace.SpanFromContext(ctx)
-			if span == nil || !span.IsRecording() {
-				return handler(ctx, req)
+			createdSelf := false
+			if (span == nil || !span.IsRecording()) && (cfg != nil && cfg.Source.OTel != nil && cfg.Source.OTel.Enable) {
+				operation := "server.request"
+				if tp, ok := transport.FromServerContext(ctx); ok {
+					operation = tp.Operation()
+				}
+				ctx, span = otel.Tracer("ai-rag-demo/server").Start(ctx, operation, trace.WithSpanKind(trace.SpanKindServer))
+				createdSelf = true
 			}
 
-			var peer string
-			switch kind {
-			case "HTTP":
-				peer = peerAddrHTTP(ctx)
-			case "gRPC":
-				peer = peerAddrGRPC(ctx)
+			if createdSelf {
+				defer span.End()
 			}
 
-			span.SetAttributes(
-				semconv.RPCSystemKey.String(kind),
-				semconv.RPCServiceKey.String(operation),
-				semconv.PeerServiceKey.String(peer),
-				semconv.NetworkPeerAddressKey.String(peer),
-			)
+			if span != nil && span.IsRecording() {
+				tp, _ := transport.FromServerContext(ctx)
+				operation := tp.Operation()
+				kind := tp.Kind().String()
+				var peer string
+				switch kind {
+				case "HTTP":
+					peer = peerAddrHTTP(ctx)
+				case "gRPC":
+					peer = peerAddrGRPC(ctx)
+				}
+
+				span.SetAttributes(
+					attribute.String("request_id", requestID),
+					semconv.RPCSystemKey.String(kind),
+					semconv.RPCServiceKey.String(operation),
+					semconv.PeerServiceKey.String(peer),
+					semconv.NetworkPeerAddressKey.String(peer),
+				)
+			}
 
 			reply, err = handler(ctx, req)
 
 			latency := time.Since(startTime)
-			if err != nil {
+			if err != nil && span != nil && span.IsRecording() {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
 			}
-			span.SetAttributes(semconv.FaaSTimeKey.Float64(float64(latency.Milliseconds())))
-
+			if span != nil && span.IsRecording() {
+				span.SetAttributes(semconv.FaaSTimeKey.Float64(float64(latency.Milliseconds())))
+			}
 			return
 		}
 	}

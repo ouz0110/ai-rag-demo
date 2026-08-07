@@ -9,12 +9,13 @@ import (
 	pb "ai-rag-demo/api/nocli/v1"
 	"ai-rag-demo/internal/biz/nocli/openai/compressor"
 	"ai-rag-demo/internal/pkg/log"
+	"ai-rag-demo/internal/pkg/observability"
 
 	openai "github.com/sashabaranov/go-openai"
 )
 
 // Run 核心 Agent 循环执行引擎
-func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, error) {
+func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (res *LoopResult, err error) {
 	if opts == nil {
 		return nil, fmt.Errorf("opts 不能为空")
 	}
@@ -32,6 +33,27 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 	if sessionID != "" && ctx.Value(ParentSessionIDKey) == nil {
 		ctx = context.WithValue(ctx, ParentSessionIDKey, sessionID)
 	}
+	ctx = observability.WithSessionID(ctx, sessionID)
+	ctx = observability.WithAgentName(ctx, b.Name())
+
+	// 🎯 触发 Observability Agent 维度 Hook
+	obs := observability.GetObserver(ctx)
+	agentCtx, endAgent := obs.OnAgentStart(ctx, &observability.AgentRunInfo{
+		AgentName:     b.Name(),
+		SessionID:     sessionID,
+		Model:         b.Model(),
+		MaxIterations: b.MaxIterations(),
+		Timeout:       b.Timeout(),
+	})
+	ctx = agentCtx
+	defer func() {
+		var reply string
+		if res != nil {
+			reply = res.Reply
+		}
+		endAgent(reply, err)
+	}()
+
 	messages := b.EnhanceRuntimeMessages(ctx, opts.Messages)
 	model := b.Model()
 	tools := b.Tools()
@@ -229,12 +251,23 @@ func (b *BaseAgent) Run(ctx context.Context, opts *RunOptions) (*LoopResult, err
 			req.Tools = nil
 		}
 
-		msg, err := fetcher(ctx, req)
+		// 🎯 触发 Observability LLM 维度 Hook
+		llmCtx, endLLM := obs.OnLLMStart(ctx, &observability.LLMCallInfo{
+			AgentName:     b.Name(),
+			SessionID:     sessionID,
+			Model:         model,
+			MessagesCount: len(req.Messages),
+			ToolsCount:    len(req.Tools),
+			Iteration:     iteration,
+		})
+
+		msg, err := fetcher(llmCtx, req)
 		if err != nil && len(req.Tools) > 0 && (!errors.Is(err, context.Canceled) && ctx.Err() == nil && !strings.Contains(err.Error(), "context canceled")) {
 			log.Warnw(ctx, "llm_tools_unsupported_fallback", append(baseFields, "iteration", iteration, "error", err)...)
 			req.Tools = nil
-			msg, err = fetcher(ctx, req)
+			msg, err = fetcher(llmCtx, req)
 		}
+		endLLM(&msg, err)
 		if err != nil {
 			// 🎯 1. 检查是否为 Agent 执行超时 (context.DeadlineExceeded)
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || strings.Contains(strings.ToLower(err.Error()), "deadline exceeded") || strings.Contains(strings.ToLower(err.Error()), "timeout") {

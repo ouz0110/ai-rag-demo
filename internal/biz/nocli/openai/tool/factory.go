@@ -9,6 +9,7 @@ import (
 	"ai-rag-demo/internal/biz/nocli/vector"
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/external/mcp"
+	"ai-rag-demo/internal/pkg/observability"
 	"ai-rag-demo/internal/pkg/skill"
 
 	openai "github.com/sashabaranov/go-openai"
@@ -110,7 +111,16 @@ func (r *Registry) Call(ctx context.Context, name, argsJSON string) (string, err
 	if !ok {
 		return "", fmt.Errorf("未知工具: %s", name)
 	}
-	return t.Run(ctx, argsJSON)
+
+	obs := observability.GetObserver(ctx)
+	toolCtx, endTool := obs.OnToolStart(ctx, &observability.ToolCallInfo{
+		ToolName: name,
+		ArgsJSON: argsJSON,
+	})
+
+	res, err := t.Run(toolCtx, argsJSON)
+	endTool(res, err)
+	return res, err
 }
 
 func (r *Registry) RequiresApproval(ctx context.Context, name, argsJSON string) bool {

@@ -82,23 +82,24 @@ func main() {
 	metrics.Register()
 
 	ctx := context.Background()
-	var otelTimeout time.Duration
-	if config.Source.OTel != nil {
-		otelTimeout = config.Source.OTel.Timeout.Duration
+	if config.Source.OTel != nil && config.Source.OTel.Enable {
+		otelTimeout := config.Source.OTel.Timeout.Duration
+		shutdown, err := utils.InitTracer(ctx, utils.TracerConfig{
+			ServerName: config.Name,
+			Endpoint:   config.Source.OTel.Endpoint,
+			SampleRate: config.Source.OTel.SampleRate,
+			StdOut:     config.Source.OTel.StdOut,
+			Timeout:    otelTimeout,
+		})
+		if err != nil {
+			os.Exit(1)
+		}
+		if shutdown != nil {
+			defer func() {
+				_ = shutdown(ctx)
+			}()
+		}
 	}
-	shutdown, err := utils.InitTracer(ctx, utils.TracerConfig{
-		ServerName: config.Name,
-		Endpoint:   config.Source.OTel.Endpoint,
-		SampleRate: config.Source.OTel.SampleRate,
-		StdOut:     config.Source.OTel.StdOut,
-		Timeout:    otelTimeout,
-	})
-	if err != nil {
-		os.Exit(1)
-	}
-	defer func() {
-		_ = shutdown(ctx)
-	}()
 
 	// start and wait for stop signal
 	if err = a.kratosApp.Run(); err != nil {

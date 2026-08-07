@@ -13,6 +13,7 @@ import (
 
 	dataBase "ai-rag-demo/internal/data/base"
 	"ai-rag-demo/internal/pkg/log"
+	"ai-rag-demo/internal/pkg/observability"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -91,6 +92,7 @@ func (s *ChatBiz) StreamCompletion(ctx context.Context, req *pb.CompletionReques
 	}
 
 	// 🎯 立即向前端推送首帧 (包含正式的 session_id)，确保前端立刻同步 sessionID 路由与状态
+	ctx = observability.WithSessionID(ctx, sessionID)
 	emitter(&pb.StreamChunk{
 		Event:     pb.StreamEventType_SET_UNSPECIFIED,
 		SessionId: sessionID,

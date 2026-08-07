@@ -20,7 +20,7 @@ server:
 source:
   log:
     level: debug
-    
+    enable_trace_log: true                   # 🎯 是否开启本地日志打印 LLM 全链路切面 (OnAgentStart/OnLLMStart/OnToolStart)
   aes_ecb:
     code: "0123456789012345"
   otel:
@@ -65,7 +65,7 @@ source:
       min_uncompressed_msgs: 4                # 两次压缩之间至少积累的增量消息条数 (防频繁压缩)
       keep_recent_messages: 4                # 压缩时固定保留的最新消息条数 (确保近期对话连贯)
       max_summary_tokens: 800                # 生成 Checkpoint 摘要的最大 Token 数 (500-1000t)
-      timeout: 30                            # 摘要生成硬超时时间 (单位：秒，默认 30)
+      timeout: 30s                           # 摘要生成硬超时时间 (30秒)
   skill:
     enable: true                            # 是否开启 Skill 技能扩展系统全局总开关
     path: "./workspace/skills"

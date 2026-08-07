@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 var c *Config
@@ -48,29 +50,50 @@ func (d *durationWrapper) UnmarshalJSON(b []byte) error {
 	}
 }
 
+func (d *durationWrapper) MarshalYAML() (interface{}, error) {
+	return d.String(), nil
+}
+
+func (d *durationWrapper) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err == nil {
+		dur, err := time.ParseDuration(s)
+		if err == nil {
+			d.Duration = dur
+			return nil
+		}
+	}
+	var i int64
+	if err := value.Decode(&i); err == nil {
+		d.Duration = time.Duration(i)
+		return nil
+	}
+	return fmt.Errorf("invalid duration: %v", value.Value)
+}
+
 type DBConfig struct {
-	Driver       string          `json:"driver"`
-	Source       string          `json:"source"`
-	AutoMigrate  string          `json:"auto_migrate"`
-	MaxIdleConns int             `json:"max_idle_conns"`
-	MaxOpenConns int             `json:"max_open_conns"`
-	MaxLifetime  durationWrapper `json:"max_lifetime"`
-	Ca           string          `json:"ca"`
+	Driver       string          `json:"driver" yaml:"driver"`
+	Source       string          `json:"source" yaml:"source"`
+	AutoMigrate  string          `json:"auto_migrate" yaml:"auto_migrate"`
+	MaxIdleConns int             `json:"max_idle_conns" yaml:"max_idle_conns"`
+	MaxOpenConns int             `json:"max_open_conns" yaml:"max_open_conns"`
+	MaxLifetime  durationWrapper `json:"max_lifetime" yaml:"max_lifetime"`
+	Ca           string          `json:"ca" yaml:"ca"`
 }
 
 type RedisConfig struct {
-	Password     string          `json:"password"`
-	Addrs        string          `json:"addrs"`
-	ReadTimeout  durationWrapper `json:"read_timeout"`
-	WriteTimeout durationWrapper `json:"write_timeout"`
-	DB           int             `json:"db"`
+	Password     string          `json:"password" yaml:"password"`
+	Addrs        string          `json:"addrs" yaml:"addrs"`
+	ReadTimeout  durationWrapper `json:"read_timeout" yaml:"read_timeout"`
+	WriteTimeout durationWrapper `json:"write_timeout" yaml:"write_timeout"`
+	DB           int             `json:"db" yaml:"db"`
 }
 
 type OTel struct {
-	Enable     bool            `json:"enable"`
-	Endpoint   string          `yaml:"endpoint"`
-	SampleRate float32         `yaml:"sample_rate"`
-	StdOut     bool            `yaml:"std_out"`
+	Enable     bool            `json:"enable" yaml:"enable"`
+	Endpoint   string          `json:"endpoint" yaml:"endpoint"`
+	SampleRate float32         `json:"sample_rate" yaml:"sample_rate"`
+	StdOut     bool            `json:"std_out" yaml:"std_out"`
 	Timeout    durationWrapper `json:"timeout" yaml:"timeout"`
 }
 
@@ -82,8 +105,8 @@ type OpenAIContextCompressConfig struct {
 	MaxCompressCount    int     `json:"max_compress_count" yaml:"max_compress_count"`       // 单会话最大压缩次数限制
 	MinUncompressedMsgs int     `json:"min_uncompressed_msgs" yaml:"min_uncompressed_msgs"` // 两次压缩之间必须积累的最小未压缩消息条数
 	KeepRecentMessages  int     `json:"keep_recent_messages" yaml:"keep_recent_messages"`   // 压缩时固定保留的最新消息数
-	MaxSummaryTokens    int     `json:"max_summary_tokens" yaml:"max_summary_tokens"`       // 摘要最大 Token 限制
-	Timeout             int     `json:"timeout" yaml:"timeout"`                             // 摘要生成超时时间 (单位：秒，默认 30)
+	MaxSummaryTokens    int             `json:"max_summary_tokens" yaml:"max_summary_tokens"`       // 摘要最大 Token 限制
+	Timeout             durationWrapper `json:"timeout" yaml:"timeout"`                             // 摘要生成超时时间 (如 30s)
 }
 
 type OpenAI struct {
@@ -236,9 +259,10 @@ type Config struct {
 	} `json:"server"`
 	Source struct {
 		Log struct {
-			Level        string `json:"level"`
-			SdkEnableLog int32  `json:"sdk_enable_log"`
-		} `json:"log"`
+			Level          string `json:"level" yaml:"level"`
+			SdkEnableLog   int32  `json:"sdk_enable_log" yaml:"sdk_enable_log"`
+			EnableTraceLog bool   `json:"enable_trace_log" yaml:"enable_trace_log"`
+		} `json:"log" yaml:"log"`
 		AesEcb struct {
 			Code string `json:"code"`
 		} `json:"aes_ecb"`

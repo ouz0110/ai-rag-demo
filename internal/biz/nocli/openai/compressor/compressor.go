@@ -8,6 +8,7 @@ import (
 
 	"ai-rag-demo/internal/conf"
 	"ai-rag-demo/internal/pkg/log"
+	"ai-rag-demo/internal/pkg/observability"
 
 	openai "github.com/sashabaranov/go-openai"
 )
@@ -135,7 +136,22 @@ func (c *ContextCompressor) Compress(
 	msgs []openai.ChatCompletionMessage,
 	summarizerFunc SummarizerFunc,
 	onStart OnCompressStartFunc,
-) (*CompressResult, error) {
+) (compRes *CompressResult, err error) {
+	totalTokens := c.EstimateTokens(msgs)
+	obs := observability.GetObserver(ctx)
+	compressCtx, endCompress := obs.OnCompressStart(ctx, &observability.CompressInfo{
+		OriginalTokens: totalTokens,
+		CompressCount:  currentCompressCount,
+	})
+	ctx = compressCtx
+	defer func() {
+		if compRes != nil {
+			endCompress(compRes.CompressedTokens, compRes.IsMaxLimitReached, compRes.SummaryText, err)
+		} else {
+			endCompress(0, false, "", err)
+		}
+	}()
+
 	should, origTokens := c.ShouldCompress(msgs)
 	if !should {
 		return &CompressResult{
@@ -279,15 +295,14 @@ func (c *ContextCompressor) Compress(
 	}
 
 	// 3. 正常调用 LLM 生成摘要 (读取配置的动态超时时间，默认 30 秒)
-	timeoutSec := 30
-	if c.cfg != nil && c.cfg.Timeout > 0 {
-		timeoutSec = c.cfg.Timeout
+	summaryTimeout := 30 * time.Second
+	if c.cfg != nil && c.cfg.Timeout.Duration > 0 {
+		summaryTimeout = c.cfg.Timeout.Duration
 	}
-	summaryCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSec)*time.Second)
+	summaryCtx, cancel := context.WithTimeout(ctx, summaryTimeout)
 	defer cancel()
 
 	var summaryText string
-	var err error
 	if summarizerFunc != nil {
 		summaryText, err = summarizerFunc(summaryCtx, c.distillToolOutputs(toCompress))
 	} else {
